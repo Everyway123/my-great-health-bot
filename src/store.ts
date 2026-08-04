@@ -87,18 +87,26 @@ export async function logHealth(
   }
 }
 
-/** Rows at/after `sinceISO`, oldest-first. Never throws — [] on failure. */
-export async function fetchHealthSince(userId: number, sinceISO: string): Promise<HealthRow[]> {
+/** Rows at/after `sinceISO`, oldest-first, optionally narrowed to `kinds`
+ *  (labs need a year-long window while food needs days — one query shape for
+ *  both). Never throws — [] on failure. */
+export async function fetchHealthSince(userId: number, sinceISO: string, kinds?: HealthKind[]): Promise<HealthRow[]> {
   if (!(await ensureHealthTable())) return [];
   const p = getPool();
   if (!p) return [];
   try {
+    const params: unknown[] = [userId, sinceISO];
+    let kindFilter = '';
+    if (kinds && kinds.length > 0) {
+      params.push(kinds);
+      kindFilter = 'and kind = any($3)';
+    }
     const res = await p.query<HealthRow>(
       `select id, user_id, kind, content, data, logged_at
          from hermes.health_log
-        where user_id = $1 and logged_at >= $2
+        where user_id = $1 and logged_at >= $2 ${kindFilter}
         order by logged_at asc`,
-      [userId, sinceISO],
+      params,
     );
     return res.rows;
   } catch (err) {
