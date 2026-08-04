@@ -65,7 +65,22 @@ src/
   config.ts, security.ts, logger.ts, models.ts, prompts.ts, day.ts, split.ts
 ```
 
-## Деплой (Railway)
+## Деплой — одна команда
+
+```bash
+git clone https://github.com/Everyway123/my-great-health-bot
+cd my-great-health-bot
+./scripts/deploy.sh
+```
+
+Скрипт лінкує проєкт, створює сервіс, ставить 5 змінних і деплоїть. **Єдиний
+секрет, який ти вводиш, — токен нового бота**; решта підтягується посиланнями
+на Hermes-сервіс (`${{hermes-worker.DATABASE_URL}}` тощо), тому нічого шукати
+й копіювати не треба. Через це сервіс має жити в ТОМУ САМОМУ проєкті, що
+Hermes (`jubilant-hope`). Інше ім'я Hermes-сервісу — передай:
+`HERMES_SERVICE=hermes ./scripts/deploy.sh`.
+
+## Деплой руками (Railway UI)
 
 1. Новий сервіс з цього репо (`main`), Dockerfile підхопиться сам.
 2. Env-змінні (див. `.env.example`):
