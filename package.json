@@ -1,0 +1,28 @@
+{
+  "name": "pulse-health-bot",
+  "version": "1.0.0",
+  "description": "«Пульс тіла» — персональний health-бот Андрія: нутриціолог + тренер + коуч сну/відновлення (Telegram + Claude vision)",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.87.0",
+    "dotenv": "^17.4.1",
+    "grammy": "^1.42.0",
+    "node-cron": "^4.2.1",
+    "pg": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  }
+}
