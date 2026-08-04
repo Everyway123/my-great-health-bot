@@ -10,7 +10,7 @@ import { log, setAlertSink } from './logger.js';
 import { createBot } from './bot.js';
 import { splitMessage } from './split.js';
 import { feedbackKeyboard } from './feedback.js';
-import { runHealthDaily, runHealthReport } from './coach.js';
+import { runHealthDaily, runHealthReport, runMorningCheckin } from './coach.js';
 
 async function main() {
   const config = loadConfig();
@@ -69,6 +69,23 @@ async function main() {
     { timezone: config.timezone },
   );
 
+  // Morning check-in 07:45 — the day's focus BEFORE the day (digest judges
+  // after). Silent until the user has engaged (empty profile + empty journal).
+  cron.schedule(
+    '45 7 * * *',
+    async () => {
+      log({ level: 'info', action: 'cron_morning' });
+      for (const userId of config.allowedUserIds) {
+        try {
+          await sendToUser(userId, await runMorningCheckin(config, userId));
+        } catch (err) {
+          log({ level: 'error', action: 'cron_morning_error', userId, details: { error: String(err) } });
+        }
+      }
+    },
+    { timezone: config.timezone },
+  );
+
   // Weekly trends — Sunday 17:00. Silent when the week has no data.
   cron.schedule(
     '0 17 * * 0',
@@ -84,7 +101,7 @@ async function main() {
     },
     { timezone: config.timezone },
   );
-  log({ level: 'info', action: 'crons_scheduled', details: { daily: '45 20 * * *', weekly: '0 17 * * 0' } });
+  log({ level: 'info', action: 'crons_scheduled', details: { morning: '45 7 * * *', daily: '45 20 * * *', weekly: '0 17 * * 0' } });
 
   // Resilient long-poll start — retries the transient getUpdates-409 during a
   // redeploy; crashes loud on permanent auth failure (revoked token) so Railway
@@ -95,6 +112,12 @@ async function main() {
         onStart: () => {
           log({ level: 'info', action: 'bot_started', details: { attempt } });
           console.log('🫀 Пульс тіла is running!');
+          // Boot ping — one line to the owner so «сервіс живий, токен і
+          // allowlist працюють» видно з телефона, без логів Railway. Якщо
+          // цього повідомлення нема — проблема вище (сервіс/токен/деплой).
+          for (const userId of config.allowedUserIds) {
+            bot.api.sendMessage(userId, '🫀 Пульс тіла онлайн. Кидай фото їжі або пиши /help.').catch(() => {});
+          }
         },
       });
       return;

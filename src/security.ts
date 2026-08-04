@@ -36,6 +36,16 @@ export function authMiddleware(allowedUserIds: number[]) {
     const userId = ctx.from?.id;
     if (!userId || !isAuthorizedUser(userId, allowedUserIds)) {
       log({ level: 'warn', action: 'unauthorized_access', userId: userId ?? 0, details: { username: ctx.from?.username } });
+      // NOT silent (unlike Hermes): for a personal bot the #1 onboarding
+      // failure is a wrong/missing ALLOWED_USER_IDS, and silence is
+      // undebuggable from the phone. Echo the sender their OWN id so the
+      // owner can paste it into Railway; strangers learn nothing but their
+      // own id. Diagnosed live 2026-08-04: «тиша» on /start.
+      if (userId) {
+        await ctx
+          .reply(`⛔️ Це приватний бот. Твій Telegram ID: <code>${userId}</code> — якщо це твій бот, додай цей ID в ALLOWED_USER_IDS.`, { parse_mode: 'HTML' })
+          .catch(() => {});
+      }
       return;
     }
     if (!rateLimiter.check(userId)) {

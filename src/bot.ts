@@ -10,20 +10,23 @@ import { feedbackKeyboard, recordFeedback } from './feedback.js';
 import { analyzeHealthMedia, handleText, runHealthReport } from './coach.js';
 
 const HELP_TEXT = `
-💪 <b>Пульс тіла</b> — твій нутриціолог, тренер і коуч сну.
+💪 <b>Пульс тіла</b> — твій персональний коуч: харчування, тренування, сон, довголіття.
 
 <b>Як користуватись:</b>
 📸 Кинь <b>фото їжі</b> — розпізнаю, оціню ≈калорії/макроси, скажу вердикт і залогую
 🧪 Кинь <b>бланк аналізів</b> (фото або PDF) — розберу маркери, скажу що поза нормою
 ⌚ Скриншот трекера (сон/ваги/годинник) — витягну числа в журнал
 
-<b>Текстом:</b> просто пиши — «вага 91.2», «спав 6 год», «трен ноги 45 хв», «ціль: 88 кг» — або став питання: «скільки калорій за тиждень?», «яка динаміка ваги?»
+<b>Текстом:</b> просто пиши — «вага 91.2», «спав 6 год», «трен ноги 45 хв» — або питай: «скільки калорій за тиждень?», «що їсти на вечерю?»
+
+<b>Я запамʼятовую:</b> скажи «запам'ятай: зріст 183, ціль 88 кг, коліно травмоване» — і це назавжди в профілі. Історію розмови теж памʼятаю.
 
 <b>Команди:</b>
 /coach — звіт за 7 дн (/coach 30 — за місяць)
+/profile — що я про тебе знаю
 /help — це повідомлення
 
-<b>Сам напишу:</b> щодня 20:45 — дайджест дня; неділя 17:00 — тижневі тренди.
+<b>Сам напишу:</b> 07:45 — фокус дня; 20:45 — дайджест дня; неділя 17:00 — тижневий звіт + план на тиждень (відповіси «прийнято» — зафіксую і вестиму по ньому).
 `.trim();
 
 async function replyChunked(ctx: Context, msg: string, withFeedback = true): Promise<void> {
@@ -59,6 +62,21 @@ export function createBot(config: AppConfig): Bot {
       log({ level: 'error', action: 'command_coach', details: { error: String(err) } });
       await ctx.reply('⚠️ Не вдалося зібрати звіт. Спробуй пізніше.');
     }
+  });
+
+  bot.command('profile', async (ctx) => {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const { getProfile } = await import('./profile.js');
+    const data = await getProfile(userId);
+    const keys = Object.keys(data);
+    if (keys.length === 0) {
+      await ctx.reply('🧠 Профіль поки порожній. Напиши «запам\'ятай: зріст 183, ціль 88 кг» — і я почну вести тебе предметно.');
+      return;
+    }
+    const lines = keys.sort().map((k) => `• <b>${k}</b>: ${JSON.stringify(data[k])}`);
+    await ctx.reply(`🧠 <b>Що я про тебе знаю:</b>\n${lines.join('\n')}\n\n<i>Змінити: «запам'ятай …»; видалити: «забудь …»</i>`, { parse_mode: 'HTML' })
+      .catch(() => ctx.reply(`Профіль: ${keys.join(', ')}`));
   });
 
   // Telegram Bot API caps getFile at 20MB — fine for photos and lab PDFs.

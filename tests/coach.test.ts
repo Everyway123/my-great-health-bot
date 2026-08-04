@@ -24,6 +24,17 @@ describe('parseCoachJson', () => {
     expect(p!.kind).toBe('other');
   });
 
+  it('passes profile_updates through, null when absent or empty', () => {
+    const withUpdates = parseCoachJson(
+      '{"kind":"other","title":"","data":{},"profile_updates":{"height_cm":183,"injuries":null},"reply":"ок"}',
+    );
+    expect(withUpdates!.profileUpdates).toEqual({ height_cm: 183, injuries: null });
+    const without = parseCoachJson('{"kind":"meal","title":"x","data":{},"reply":"ок"}');
+    expect(without!.profileUpdates).toBeNull();
+    const empty = parseCoachJson('{"kind":"meal","title":"x","data":{},"profile_updates":{},"reply":"ок"}');
+    expect(empty!.profileUpdates).toBeNull();
+  });
+
   it('rejects invalid kind, missing reply, broken JSON, empty input', () => {
     expect(parseCoachJson('{"kind":"selfie","title":"x","data":{},"reply":"y"}')).toBeNull();
     expect(parseCoachJson('{"kind":"meal","title":"x","data":{}}')).toBeNull();
