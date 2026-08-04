@@ -18,6 +18,10 @@
 
 set -euo pipefail
 
+# Andrii's Railway project (jubilant-hope) — the one Hermes already lives in.
+# Hardcoded so linking is non-interactive AND can't land on the wrong project:
+# the ${{...}} variable references below only resolve inside this project.
+PROJECT_ID="${PROJECT_ID:-862acf40-3d9e-4a77-b20a-d58997e394b5}"
 SERVICE="${SERVICE:-pulse-health}"          # name for the new Railway service
 HERMES_SERVICE="${HERMES_SERVICE:-hermes-worker}"  # service to borrow vars from
 TZ_VALUE="${TZ_VALUE:-Europe/Lisbon}"
@@ -34,12 +38,13 @@ if ! railway whoami >/dev/null 2>&1; then
 fi
 railway whoami
 
-say "2/5 · Лінкую проєкт"
-# Якщо ще не злінковано — інтерактивний вибір. ОБЕРИ проєкт, де живе Hermes
-# (jubilant-hope), інакше посилання на його змінні не спрацюють.
-if ! railway status >/dev/null 2>&1; then
+say "2/5 · Лінкую проєкт jubilant-hope"
+# Неінтерактивно за ID — так гарантовано потрапляємо в проєкт Hermes'а
+# (посилання ${{hermes-worker.X}} працюють ЛИШЕ всередині одного проєкту).
+railway link --project "$PROJECT_ID" 2>/dev/null || railway link -p "$PROJECT_ID" 2>/dev/null || {
+  echo "Не вдалось злінкувати за ID — обери проєкт руками (це має бути jubilant-hope):"
   railway link
-fi
+}
 railway status || true
 
 say "3/5 · Створюю/обираю сервіс «$SERVICE»"
