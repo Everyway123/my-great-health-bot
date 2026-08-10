@@ -1,35 +1,15 @@
-// Durable coach memory — ONE jsonb profile per user: height, target weight,
-// injuries, preferences, accepted weekly plan, anything long-lived the coach
-// must never re-ask. The model maintains it itself: any turn can emit
-// `profile_updates` in the JSON contract («запам'ятай: зріст 183» → merged
-// here). Self-healing table, same pattern as the rest.
+// Durable coach memory — ONE jsonb profile per user: height, injuries,
+// preferences, anything long-lived and unstructured the coach must never
+// re-ask. The model maintains it itself via `profile_updates`.
+//
+// NOTE: numeric goals no longer live here. Anything code has to divide by
+// (protein/day, sleep target, sessions/week) is a typed row in health_target —
+// see targets.ts. The profile is for prose facts, not arithmetic inputs.
 
 import { getPool } from './store.js';
 import { log } from './logger.js';
 
-let ensured = false;
-
-async function ensureTable(): Promise<boolean> {
-  const p = getPool();
-  if (!p) return false;
-  if (ensured) return true;
-  try {
-    await p.query(`
-      create table if not exists hermes.health_profile (
-        user_id    bigint primary key,
-        data       jsonb not null default '{}',
-        updated_at timestamptz not null default now()
-      )`);
-    ensured = true;
-    return true;
-  } catch (err) {
-    log({ level: 'error', action: 'profile_table_error', details: { error: String(err).slice(0, 200) } });
-    return false;
-  }
-}
-
 export async function getProfile(userId: number): Promise<Record<string, unknown>> {
-  if (!(await ensureTable())) return {};
   const p = getPool();
   if (!p) return {};
   try {
@@ -45,7 +25,6 @@ export async function getProfile(userId: number): Promise<Record<string, unknown
 }
 
 export async function saveProfile(userId: number, data: Record<string, unknown>): Promise<boolean> {
-  if (!(await ensureTable())) return false;
   const p = getPool();
   if (!p) return false;
   try {

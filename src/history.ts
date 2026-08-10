@@ -5,29 +5,6 @@
 import { getPool } from './store.js';
 import { log } from './logger.js';
 
-let ensured = false;
-
-async function ensureTable(): Promise<boolean> {
-  const p = getPool();
-  if (!p) return false;
-  if (ensured) return true;
-  try {
-    await p.query(`
-      create table if not exists hermes.health_chat (
-        id         serial primary key,
-        user_id    bigint not null,
-        role       text   not null,
-        content    text   not null,
-        created_at timestamptz not null default now()
-      )`);
-    ensured = true;
-    return true;
-  } catch (err) {
-    log({ level: 'error', action: 'health_chat_table_error', details: { error: String(err).slice(0, 200) } });
-    return false;
-  }
-}
-
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -35,7 +12,6 @@ export interface ChatTurn {
 
 export async function storeTurn(userId: number, role: 'user' | 'assistant', content: string): Promise<void> {
   if (!content || content.trim().length === 0) return;
-  if (!(await ensureTable())) return;
   const p = getPool();
   if (!p) return;
   try {
@@ -51,7 +27,6 @@ export async function storeTurn(userId: number, role: 'user' | 'assistant', cont
 
 /** Last `limit` turns, oldest-first (the shape the messages array wants). */
 export async function loadTurns(userId: number, limit = 16): Promise<ChatTurn[]> {
-  if (!(await ensureTable())) return [];
   const p = getPool();
   if (!p) return [];
   try {
