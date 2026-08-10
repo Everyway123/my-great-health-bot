@@ -10,11 +10,12 @@ import { feedbackKeyboard, recordFeedback } from './feedback.js';
 import { analyzeHealthMedia, handleText, runHealthReport } from './coach.js';
 import { getTargets, serializeTargets, TARGET_SPECS } from './targets.js';
 import {
+  ouraAuth,
   ouraConfig,
   authorizeUrl,
   linkAccount,
   unlinkAccount,
-  getStoredToken,
+  isConnected,
   syncRange,
   backfill,
   setLastSyncDay,
@@ -48,7 +49,7 @@ const HELP_TEXT = `
 /prs — силові рекорди і що ставити далі
 /targets — мої цілі
 /profile — що я про тебе знаю
-/oura — підключити каблучку Oura
+/oura — статус підключення Oura
 /sync — синхронізувати Oura зараз
 /backfill — затягнути всю історію Oura з ${OURA_HISTORY_START}
 /help — це повідомлення
@@ -123,15 +124,23 @@ export function createBot(config: AppConfig): Bot {
   bot.command('oura', async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const cfg = ouraConfig();
-    if (!cfg) {
+    const auth = ouraAuth();
+    if (auth?.kind === 'pat') {
       await ctx.reply(
-        '⚠️ Oura не налаштована. Треба зареєструвати застосунок на cloud.ouraring.com і додати у Railway три змінні:\n<code>OURA_CLIENT_ID</code>, <code>OURA_CLIENT_SECRET</code>, <code>OURA_REDIRECT_URI</code>\n\n<i>Personal access tokens Oura скасувала у грудні 2025 — працює тільки OAuth2.</i>',
+        '⌚ <b>Oura підключена через персональний токен</b> — нічого авторизувати не треба.\n\n<code>/sync</code> — синхронізувати зараз\n<code>/backfill</code> — затягнути всю історію',
         { parse_mode: 'HTML' },
       );
       return;
     }
-    const existing = await getStoredToken(userId);
+    const cfg = ouraConfig();
+    if (!cfg) {
+      await ctx.reply(
+        '⚠️ Oura не налаштована. Найпростіше — персональний токен: створи його на cloud.ouraring.com/personal-access-tokens і поклади в Railway як <code>OURA_TOKEN</code>.\n\nЯкщо токени в акаунті недоступні — тоді OAuth2: <code>OURA_CLIENT_ID</code>, <code>OURA_CLIENT_SECRET</code>, <code>OURA_REDIRECT_URI</code>.',
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    const existing = await isConnected({ kind: 'oauth', cfg }, userId);
     const url = authorizeUrl(cfg, String(userId));
     await ctx.reply(
       `${existing ? '✅ Каблучка вже підключена. Перепідключити:\n\n' : '⌚ <b>Підключення Oura</b>\n\n'}1. Відкрий посилання і дозволь доступ:\n${url}\n\n2. Тебе перекине на твій redirect URI. Скопіюй з адресного рядка значення <code>code=</code>.\n\n3. Надішли сюди: <code>/oura_code ВСТАВ_КОД</code>\n\n<i>Код живе 10 хвилин.</i>`,
@@ -150,7 +159,7 @@ export function createBot(config: AppConfig): Bot {
       await linkAccount(cfg, userId, code);
       await ctx.reply('✅ Каблучку підключено. Тягну останні 14 днів...');
       const today = todayInTz(config.timezone);
-      const r = await syncRange(cfg, userId, shiftDay(today, -14), today);
+      const r = await syncRange({ kind: 'oauth', cfg }, userId, shiftDay(today, -14), today);
       await setLastSyncDay(userId, today);
       await ctx.reply(
         `⌚ Готово: ${r.days} дн, ${r.events} записів, ${r.metrics} метрик.${r.errors.length ? `\n⚠️ ${r.errors.slice(0, 2).join('; ')}` : ''}\n\nТепер — <code>/backfill</code>, щоб затягнути всю історію з ${OURA_HISTORY_START}.`,
@@ -172,12 +181,12 @@ export function createBot(config: AppConfig): Bot {
   bot.command('sync', async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const cfg = ouraConfig();
-    if (!cfg) return void ctx.reply('⚠️ Oura не налаштована (див. /oura).');
-    if (!(await getStoredToken(userId))) return void ctx.reply('⌚ Каблучка не підключена — /oura.');
+    const auth = ouraAuth();
+    if (!auth) return void ctx.reply('⚠️ Oura не налаштована (див. /oura).');
+    if (!(await isConnected(auth, userId))) return void ctx.reply('⌚ Каблучка не підключена — /oura.');
     await ctx.reply('⌚ Синхронізую...');
     const today = todayInTz(config.timezone);
-    const r = await syncRange(cfg, userId, shiftDay(today, -7), today);
+    const r = await syncRange(auth, userId, shiftDay(today, -7), today);
     await setLastSyncDay(userId, today);
     await ctx.reply(
       `⌚ ${r.days} дн · ${r.events} нових записів · ${r.metrics} метрик${r.errors.length ? `\n⚠️ ${r.errors.slice(0, 2).join('; ')}` : ''}`,
@@ -187,16 +196,16 @@ export function createBot(config: AppConfig): Bot {
   bot.command('backfill', async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const cfg = ouraConfig();
-    if (!cfg) return void ctx.reply('⚠️ Oura не налаштована (див. /oura).');
-    if (!(await getStoredToken(userId))) return void ctx.reply('⌚ Каблучка не підключена — /oura.');
+    const auth = ouraAuth();
+    if (!auth) return void ctx.reply('⚠️ Oura не налаштована (див. /oura).');
+    if (!(await isConnected(auth, userId))) return void ctx.reply('⌚ Каблучка не підключена — /oura.');
     const arg = ((ctx.match as string) || '').trim();
     const start = /^\d{4}-\d{2}-\d{2}$/.test(arg) ? arg : OURA_HISTORY_START;
     const today = todayInTz(config.timezone);
     await ctx.reply(`⌚ Тягну історію з ${start}. Це кілька хвилин — писатиму по ходу.`);
     try {
       let lastReport = Date.now();
-      const total = await backfill(cfg, userId, start, today, (chunk) => {
+      const total = await backfill(auth, userId, start, today, (chunk) => {
         // Progress every ~30s: enough to show it's alive, not enough to spam.
         if (Date.now() - lastReport > 30_000) {
           lastReport = Date.now();

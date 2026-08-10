@@ -1,11 +1,16 @@
 // Oura adapter — the bot's eyes.
 //
-// Personal access tokens were retired in December 2025, so this is OAuth2
-// authorization-code with refresh. That normally implies a public callback
-// server; we don't have one and don't want one. Instead the code is carried by
-// hand exactly once: the bot prints the authorize URL, Andrii approves in the
-// browser, copies the `code` out of the redirect URL, and sends it back through
-// Telegram. From then on the refresh token lives in pg and rotates itself.
+// Two auth modes, PAT first. Oura's docs announce personal access tokens as
+// retired since December 2025, but Andrii's account still issues them, and one
+// env var beats an OAuth dance on every axis that matters here: no client
+// registration, no redirect URI, no refresh rotation to get wrong, no token
+// table to keep in sync.
+//
+// OAuth2 stays implemented as the fallback for the day the account loses PATs.
+// It needs no public callback server either: the code is carried by hand
+// exactly once — the bot prints the authorize URL, Andrii approves in the
+// browser, copies `code` out of the redirect, and sends it back over Telegram.
+// From then on the refresh token lives in pg and rotates itself.
 //
 // Pull, not webhooks: Oura recommends webhooks and they are the right end state,
 // but they need an inbound HTTPS endpoint. A scheduled pull needs nothing, and
@@ -30,12 +35,35 @@ export interface OuraConfig {
   redirectUri: string;
 }
 
+/** Two ways in. A personal access token is one env var and no ceremony; OAuth2
+ *  is the documented path since PATs were announced as retired in Dec 2025 —
+ *  except accounts that can still mint one, which is the situation here. PAT
+ *  wins when present because the failure surface is a fraction of the size. */
+export type OuraAuth = { kind: 'pat'; token: string } | { kind: 'oauth'; cfg: OuraConfig };
+
 export function ouraConfig(): OuraConfig | null {
   const clientId = process.env.OURA_CLIENT_ID;
   const clientSecret = process.env.OURA_CLIENT_SECRET;
   const redirectUri = process.env.OURA_REDIRECT_URI;
   if (!clientId || !clientSecret || !redirectUri) return null;
   return { clientId, clientSecret, redirectUri };
+}
+
+export function ouraAuth(): OuraAuth | null {
+  const token = process.env.OURA_TOKEN?.trim();
+  if (token) return { kind: 'pat', token };
+  const cfg = ouraConfig();
+  return cfg ? { kind: 'oauth', cfg } : null;
+}
+
+/** In PAT mode there is nothing to link — the env var IS the connection. */
+export async function isConnected(auth: OuraAuth, userId: number): Promise<boolean> {
+  if (auth.kind === 'pat') return true;
+  return (await getStoredToken(userId)) !== null;
+}
+
+export async function resolveToken(auth: OuraAuth, userId: number): Promise<string | null> {
+  return auth.kind === 'pat' ? auth.token : validAccessToken(auth.cfg, userId);
 }
 
 export function authorizeUrl(cfg: OuraConfig, state: string): string {
@@ -240,12 +268,12 @@ export interface SyncResult {
  *  upsert by (day, metric, source). Re-running a range is free of side effects,
  *  which is what makes both the nightly cron and the 4-year backfill safe. */
 export async function syncRange(
-  cfg: OuraConfig,
+  auth: OuraAuth,
   userId: number,
   startDay: string,
   endDay: string,
 ): Promise<SyncResult> {
-  const token = await validAccessToken(cfg, userId);
+  const token = await resolveToken(auth, userId);
   if (!token) return { days: 0, events: 0, metrics: 0, errors: ['no valid Oura token'] };
 
   const range = { start_date: startDay, end_date: endDay };
@@ -413,7 +441,7 @@ export function chunkRange(startDay: string, endDay: string, sizeDays = 90): Arr
  *  "start collecting data", it is four years of sleep and HRV already sitting
  *  in Oura's cloud waiting to be read once. */
 export async function backfill(
-  cfg: OuraConfig,
+  auth: OuraAuth,
   userId: number,
   startDay: string,
   endDay: string,
@@ -421,7 +449,7 @@ export async function backfill(
 ): Promise<SyncResult> {
   const total: SyncResult = { days: 0, events: 0, metrics: 0, errors: [] };
   for (const chunk of chunkRange(startDay, endDay)) {
-    const r = await syncRange(cfg, userId, chunk.start, chunk.end);
+    const r = await syncRange(auth, userId, chunk.start, chunk.end);
     total.days += r.days;
     total.events += r.events;
     total.metrics += r.metrics;

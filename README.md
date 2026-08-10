@@ -12,7 +12,7 @@
 ## Що вміє
 
 ### Дані заходять самі
-- ⌚ **Oura** — OAuth2, синк тричі на день + разовий бекфіл усієї історії.
+- ⌚ **Oura** — персональний токен або OAuth2, синк тричі на день + разовий бекфіл.
   Сон за фазами, HRV, пульс спокою, кроки, зони активності, стрес, SpO2, VO2max,
   тренування. Ідемпотентно: повторний синк фізично не може створити дубль
   (унікальний `dedup_key` з id документа Oura).
@@ -53,7 +53,7 @@
 ## Архітектура
 
 ```
-┌ L0 адаптери ─ telegram · oura (OAuth2, pull) ─────────────────┐
+┌ L0 адаптери ─ telegram · oura (PAT/OAuth2, pull) ─────────────┐
 ├ L1 подіїї ─── hermes.health_log: immutable, source, dedup_key ┤
 ├ L2 похідне ── metrics · sleep · adherence · strength ·        │
 │               triggers · labs · safety  (чисті, тестовані)    │
@@ -73,7 +73,7 @@ src/
   stats.ts              статистика з журналу (чиста)
   db/migrations.ts      нумеровані міграції
   db/migrate.ts         раннер
-  adapters/oura.ts      OAuth2, sync, backfill, ідемпотентність
+  adapters/oura.ts      PAT + OAuth2, sync, backfill, ідемпотентність
   domain/metrics.ts     денні метрики + серіалізація
   domain/sleep.ts       SRI, циркулярні статистики, борг сну
   domain/adherence.ts   план проти факту
@@ -89,14 +89,23 @@ src/
 
 ## Підключення Oura
 
-Personal access tokens Oura **скасувала в грудні 2025** — тільки OAuth2.
-Публічний сервер при цьому не потрібен: код переноситься руками один раз.
+Два режими; якщо заданий `OURA_TOKEN`, використовується він.
 
-1. Зареєструй застосунок: https://cloud.ouraring.com/oauth/applications
+**Персональний токен (рекомендовано).** Документація Oura називає їх скасованими
+з грудня 2025, але акаунти, які досі можуть їх видавати, працюють нормально —
+і це один env var замість усієї OAuth-церемонії.
+
+1. https://cloud.ouraring.com/personal-access-tokens → створити
+2. У Railway: `OURA_TOKEN`
+3. У боті: `/sync`, далі `/backfill` — вся історія з 2022-05-01
+
+**OAuth2 (запасний).** Публічний сервер не потрібен: код переноситься руками
+один раз.
+
+1. Застосунок: https://cloud.ouraring.com/oauth/applications
 2. У Railway: `OURA_CLIENT_ID`, `OURA_CLIENT_SECRET`, `OURA_REDIRECT_URI`
-3. У боті: `/oura` → відкрий посилання → дозволь → скопіюй `code=` з адресного
-   рядка → `/oura_code <код>` (живе 10 хвилин)
-4. `/backfill` — затягнути всю історію з 2022-05-01
+3. `/oura` → відкрий посилання → дозволь → скопіюй `code=` з адресного рядка →
+   `/oura_code <код>` (живе 10 хвилин)
 
 Далі токени оновлюються самі (Oura ротує refresh-токен на кожному обміні —
 тому він зберігається в `hermes.oura_token`, а не в памʼяті процесу).
@@ -116,7 +125,7 @@ cd my-great-health-bot
 
 - `npm run dev` — локально з hot reload
 - `npm run build` — компіляція TypeScript
-- `npm test` — vitest (81 тест на чисті функції)
+- `npm test` — vitest (84 тести на чисті функції)
 
 ## Що далі
 

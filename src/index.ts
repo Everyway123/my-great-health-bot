@@ -14,7 +14,7 @@ import { splitMessage } from './split.js';
 import { feedbackKeyboard } from './feedback.js';
 import { runHealthDaily, runHealthReport, runMorningCheckin, runTriggerCheck } from './coach.js';
 import { runMigrations } from './db/migrate.js';
-import { ouraConfig, getStoredToken, syncRange, setLastSyncDay } from './adapters/oura.js';
+import { ouraAuth, isConnected, syncRange, setLastSyncDay } from './adapters/oura.js';
 import { todayInTz, shiftDay } from './day.js';
 
 async function main() {
@@ -83,10 +83,10 @@ async function main() {
   cron.schedule(
     '20 6,13,22 * * *',
     forEachUser('cron_oura_sync', async (userId) => {
-      const cfg = ouraConfig();
-      if (!cfg || !(await getStoredToken(userId))) return;
+      const auth = ouraAuth();
+      if (!auth || !(await isConnected(auth, userId))) return;
       const today = todayInTz(config.timezone);
-      const r = await syncRange(cfg, userId, shiftDay(today, -10), today);
+      const r = await syncRange(auth, userId, shiftDay(today, -10), today);
       await setLastSyncDay(userId, today);
       if (r.errors.length > 0) {
         log({ level: 'warn', action: 'oura_sync_partial', userId, details: { errors: r.errors.slice(0, 3) } });
