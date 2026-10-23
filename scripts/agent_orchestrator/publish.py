@@ -71,6 +71,19 @@ def branch_name(task_id, sha):
     return 'agent-orchestrator/' + slug + '-' + sha[:12]
 
 
+def operation_label(command):
+    """Only fixed operation names may reach diagnostics; never arguments or output."""
+    if command and command[0]=='psql': return 'psql'
+    if command and command[0]=='gh':
+        return 'gh '+command[1] if len(command)>1 and command[1] in ('api','pr') else 'gh operation'
+    if command and command[0]=='git':
+        allowed={'check-ref-format','diff','fetch','ls-remote','merge-base','push','rev-parse','show','status'}
+        index=1
+        while index<len(command) and command[index]=='-c': index+=2
+        return 'git '+command[index] if index<len(command) and command[index] in allowed else 'git operation'
+    return 'subprocess operation'
+
+
 class Publisher:
     def __init__(self, repo, repository):
         self.repo = Path(repo).resolve()
@@ -86,9 +99,9 @@ class Publisher:
         try:
             result = subprocess.run(command, cwd=self.repo, env=env, text=True, capture_output=True, timeout=120)
         except (OSError, subprocess.TimeoutExpired):
-            raise Blocked('publisher command unavailable or timed out') from None
+            raise Blocked('publisher command unavailable or timed out: '+operation_label(command)) from None
         if required and result.returncode:
-            raise Blocked('publisher command failed')
+            raise Blocked('publisher command failed: '+operation_label(command))
         return result
 
     def git(self, *args):
@@ -151,7 +164,7 @@ class Publisher:
         Path(task_file).read_text()
         branch = branch_name(task_id, head)
         remote = 'https://github.com/' + self.repository + '.git'
-        existing = self.git('ls-remote', '--heads', remote, 'refs/heads/' + branch)
+        existing = self.git('-c', 'credential.helper=!gh auth git-credential', 'ls-remote', '--heads', remote, 'refs/heads/' + branch)
         if existing: raise Blocked('publication branch already exists')
         self.ensure_current_base(base, default)
         self.ensure_unfrozen()
@@ -185,7 +198,10 @@ def main():
     args = parser.parse_args()
     try:
         result = Publisher(args.repo, args.repository).publish(args.bundle, json.loads(Path(args.gate).read_text()), args.task_file, args.task_id, args.run_url, args.base_branch)
-    except (Blocked, ValueError, OSError):
+    except Blocked as error:
+        print(json.dumps({'status':'blocked', 'reason':str(error)}))
+        return 1
+    except (ValueError, OSError):
         print(json.dumps({'status':'blocked', 'reason':'trusted publication checks failed'}))
         return 1
     print(json.dumps(result)); return 0

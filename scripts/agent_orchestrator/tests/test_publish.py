@@ -134,6 +134,8 @@ class PublisherTests(unittest.TestCase):
             obj=Fake(target,'owner/repo')
             self.assertEqual(obj.publish(bundle,g,task,'$(echo task)', 'https://github.com/owner/repo/actions/runs/123')['pr_url'], 'https://github.com/owner/repo/pull/123')
             self.assertEqual(obj.base_count,3)
+            remote_preflight=next(c for c in obj.calls if c[0]=='git' and 'ls-remote' in c)
+            self.assertIn('credential.helper=!gh auth git-credential',remote_preflight)
             self.assertEqual(obj.status_body['state'],'success')
             self.assertEqual(obj.status_body['context'],'agent-orchestrator/review')
             self.assertNotIn('secret',json.dumps(obj.status_body))
@@ -164,6 +166,13 @@ class PublisherTests(unittest.TestCase):
                 obj.publish(bundle,g,task,'db','https://github.com/owner/repo/actions/runs/123')
             self.assertFalse(any(c[0]=='git' and 'push' in c for c in obj.calls))
 
+
+    def test_subprocess_failure_diagnostics_include_only_allowlisted_operation(self):
+        obj=p.Publisher(Path('.'),'owner/repo')
+        for command,label in [(['git','-c','credential.helper=private-key','ls-remote','https://user:secret@example.com/repo'],'git ls-remote'),(['gh','api','private-repository','--input','private-file'],'gh api'),(['psql','private-database-url'],'psql')]:
+            result=subprocess.CompletedProcess(command,1,'private-output','private-error')
+            with patch.object(p.subprocess,'run',return_value=result), self.assertRaises(p.Blocked) as error: obj.run(command)
+            self.assertIn(label,str(error.exception)); self.assertNotIn('private',str(error.exception)); self.assertNotIn('secret',str(error.exception))
 
     def test_real_bundle_import_matches_head(self):
         with tempfile.TemporaryDirectory() as d:
