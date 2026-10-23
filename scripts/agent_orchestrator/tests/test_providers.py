@@ -46,6 +46,20 @@ class StructuredReviewTests(unittest.TestCase):
         self.assertEqual(result,self.verdict()); self.assertEqual(len(requests),2)
         self.assertEqual({t['name'] for t in requests[0]['tools']},{'list','read','submit_review'})
         self.assertEqual(requests[1]['messages'][-1]['content'][0]['tool_use_id'],'read1')
+    def test_author_can_edit_but_reviewer_cannot(self):
+        call={'type':'tool_use','id':'edit1','name':'edit','input':{'path':'app.py','old':'wrong','new':'right'}}
+        requests,respond=self.exchange([
+            {'stop_reason':'tool_use','content':[call]},
+            {'stop_reason':'end_turn','content':[{'type':'text','text':'done'}]}])
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ,{'ANTHROPIC_API_KEY':'fixture'}):
+            app=Path(temporary)/'app.py'; app.write_text('keep\nwrong\n')
+            with patch.object(providers.urllib.request,'urlopen',side_effect=respond):
+                providers.AnthropicProvider({}).author('task',FileTools(temporary,{},True),None)
+            self.assertEqual(app.read_text(),'keep\nright\n')
+            self.assertIn('edit',{t['name'] for t in requests[0]['tools']})
+            _,respond=self.exchange([{'stop_reason':'tool_use','content':[call]}])
+            with patch.object(providers.urllib.request,'urlopen',side_effect=respond), self.assertRaises(Blocked):
+                providers.AnthropicProvider({}).review('task',FileTools(temporary,{}),{'head_sha':'head'})
     def test_mixed_duplicate_or_malformed_finalization_rejected(self):
         for calls in [
             [{'type':'tool_use','id':'a','name':'submit_review','input':self.verdict()},{'type':'tool_use','id':'b','name':'list','input':{}}],

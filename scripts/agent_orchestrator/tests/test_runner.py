@@ -104,6 +104,46 @@ class RunnerTests(unittest.TestCase):
             self.config['frozen']=value
             p=Provider(); result=self.run_loop(p)
             self.assertFalse(result['approved']); self.assertEqual(p.authors,0)
+    def test_typescript_failure_reports_useful_bounded_redacted_diagnostics(self):
+        from unittest.mock import patch
+        ambient='opaqueAmbientValue1234'
+        common='sk-ant-api03-'+'z'*30
+        output='src/weather.ts(12,7): error TS2322: Type string is not assignable to number. '+ambient+' '+common+'\n'+'verbose '*2000
+        self.config['checks']=[{'name':'build','command':['python3','-c','print('+repr(output)+');raise SystemExit(2)']}]
+        with patch.dict('os.environ',{'ANTHROPIC_API_KEY':ambient}): result=Orchestrator(self.repo,self.config,self.root/'out',Provider()).checks()[0]
+        self.assertFalse(result['passed']); self.assertEqual(result['stage'],'check'); self.assertEqual(result['exit_code'],2); self.assertEqual(result['command_name'],'python3')
+        diagnostic=result['diagnostics']; self.assertEqual(diagnostic['kind'],'typescript'); self.assertTrue(diagnostic['untrusted'])
+        item=diagnostic['items'][0]; self.assertEqual((item['path'],item['line'],item['column'],item['code']),('src/weather.ts',12,7,'TS2322'))
+        self.assertIn('not assignable',item['message']); serialized=json.dumps(diagnostic)
+        self.assertNotIn(ambient,serialized); self.assertNotIn(common,serialized); self.assertLessEqual(len(serialized),6000)
+    def test_setup_failure_identifies_stage_and_sanitized_tail(self):
+        self.config['setup']=[['python3','-c','print(\'API_KEY="privateSetupValue"\');print("x"*10000);raise SystemExit(3)']]
+        result=Orchestrator(self.repo,self.config,self.root/'out',Provider()).checks()[0]
+        self.assertFalse(result['passed']); self.assertEqual(result['stage'],'setup'); self.assertEqual(result['exit_code'],3)
+        self.assertEqual(result['command_name'],'python3'); self.assertEqual(result['diagnostics']['kind'],'output_tail'); self.assertTrue(result['diagnostics']['untrusted'])
+        self.assertNotIn('privateSetupValue',json.dumps(result)); self.assertLessEqual(len(json.dumps(result)),6500)
+    def test_diagnostic_tail_redacts_credentials_even_at_log_end(self):
+        from scripts.agent_orchestrator.runner import check_diagnostics
+        from unittest.mock import patch
+        text='z'*10000+'\nAPI_KEY="private-tail-value"\n{"token":"opaque-json-token"}\nAuthorization: Bearer opaque-bearer-value\nhttps://user:db-password@example.com/db'
+        with patch.dict('os.environ',{'DATABASE_URL':'ambient-database-url-value'}):
+            result=check_diagnostics(text+'\nambient-database-url-value','')
+        serialized=json.dumps(result)
+        for secret in ('private-tail-value','opaque-json-token','opaque-bearer-value','db-password','ambient-database-url-value'): self.assertNotIn(secret,serialized)
+        self.assertTrue(result['untrusted']); self.assertLess(len(serialized),5500)
+    def test_guarded_edit_preserves_other_lines_and_rejects_nonunique(self):
+        tools=FileTools(self.repo,self.config,True)
+        tools.write('edit.txt','first\ntarget\nlast\n')
+        tools.edit('edit.txt','target','replacement')
+        self.assertEqual((self.repo/'edit.txt').read_text(),'first\nreplacement\nlast\n')
+        for old in ('absent',''):
+            with self.assertRaises(Blocked): tools.edit('edit.txt',old,'bad')
+        tools.write('duplicate.txt','same same')
+        with self.assertRaises(Blocked): tools.edit('duplicate.txt','same','bad')
+        self.assertEqual((self.repo/'duplicate.txt').read_text(),'same same')
+        for name in ('.github/test.yml','.env','src/auth.py','scripts/agent_orchestrator/runner.py'):
+            with self.assertRaises(Blocked): tools.edit(name,'old','new')
+        with self.assertRaises(Blocked): FileTools(self.repo,self.config).edit('edit.txt','first','bad')
     def test_provider_failure_fails_closed(self):
         class Broken(Provider):
             def review(self,*args): raise RuntimeError('provider unavailable')

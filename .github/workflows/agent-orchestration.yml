@@ -82,6 +82,27 @@ jobs:
             state/report.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Preserve failed committed candidate
+        if: failure()
+        run: |
+          python - <<'PY'
+          import json, pathlib, re, subprocess
+          report = pathlib.Path('state/report.json')
+          if report.is_file():
+              base = json.loads(report.read_text()).get('base_sha', '')
+              if re.fullmatch('[0-9a-f]{40}', base):
+                  head = subprocess.check_output(['git', '-C', 'candidate', 'rev-parse', 'HEAD'], text=True).strip()
+                  if head != base:
+                      subprocess.run(['git', '-C', 'candidate', '-c', 'core.hooksPath=/dev/null', 'bundle', 'create', '../state/failed-candidate.bundle', base + '..HEAD'], check=True)
+          PY
+      - name: Keep failed candidate for investigation
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: failed-candidate-debug
+          path: state/failed-candidate.bundle
+          if-no-files-found: ignore
+          retention-days: 3
       - name: Hand off reviewed candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

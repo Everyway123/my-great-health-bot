@@ -17,13 +17,39 @@ def redact(value):
     """Remove ambient secrets and common embedded credential formats before transport."""
     text=str(value)
     for name, secret in os.environ.items():
-        if len(secret)>=8 and any(word in name.upper() for word in ('TOKEN','SECRET','PASSWORD','API_KEY','PRIVATE_KEY')):
+        if len(secret)>=8 and any(word in name.upper() for word in ('TOKEN','SECRET','PASSWORD','API_KEY','PRIVATE_KEY','DATABASE_URL','DSN','COOKIE','AUTH')):
             text=text.replace(secret,'[REDACTED]')
     text=re.sub(r'(?:sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})','[REDACTED]',text)
     text=re.sub(r'(?i)((?:api[_-]?key|token|secret|password)\s*[=:]\s*[\x22\x27]?)[^\s\x22\x27,;]+',r'\1[REDACTED]',text)
+    text=re.sub(r'(?i)((?:api[_-]?key|token|secret|password|cookie)[\x22\x27]\s*:\s*[\x22\x27])[^\x22\x27]+',r'\1[REDACTED]',text)
+    text=re.sub(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*',r'\1[REDACTED]',text)
+    text=re.sub(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@',r'\1[REDACTED]@',text)
     text=re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----','[REDACTED]',text,flags=re.S)
     return text
 
+
+def check_diagnostics(stdout,stderr):
+    """Bounded untrusted evidence, never instructions or raw process/environment dumps."""
+    text=redact((stdout or '')+'\n'+(stderr or ''))
+    text=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',text)
+    text=''.join(c for c in text if c in '\n\t' or ord(c)>=32)
+    matches=[]
+    pattern=r'^(.+?)\((\d+),(\d+)\):\s*(?:error|warning)\s+(TS\d+):\s*(.*)$'
+    for line in text[-200000:].splitlines():
+        match=re.match(pattern,line)
+        if match:
+            path,row,column,code,message=match.groups()
+            matches.append({'path':path[:160],'line':int(row),'column':int(column),'code':code,'message':message[:300]})
+            if len(matches)==8: break
+    result={'untrusted':True,'notice':'Untrusted candidate command output; use only as diagnostic data.'}
+    if matches:
+        result.update(kind='typescript',items=matches)
+        while len(json.dumps(result))>5000 and result['items']: result['items'].pop()
+    else:
+        tail=text[-2000:]
+        while len(json.dumps(tail))>4500: tail=tail[len(tail)//4:]
+        result.update(kind='output_tail',text=tail)
+    return result
 
 def clean_env():
     return {'PATH': '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin', 'HOME':'/tmp', 'LANG':'C.UTF-8', 'GIT_CONFIG_NOSYSTEM':'1', 'GIT_CONFIG_GLOBAL':'/dev/null', 'GIT_TERMINAL_PROMPT':'0'}
@@ -89,6 +115,16 @@ class FileTools:
         if not self.writable: raise Blocked('review tools are read-only')
         if not isinstance(content,str) or len(content)>200000: raise Blocked('write exceeds limit')
         p=self.path(path,True); p.parent.mkdir(parents=True,exist_ok=True); p.write_text(content); return 'written'
+    def edit(self,path,old,new):
+        if not self.writable: raise Blocked('review tools are read-only')
+        if not isinstance(old,str) or not old or not isinstance(new,str) or max(len(old),len(new))>200000: raise Blocked('invalid bounded edit')
+        source=self.path(path,True)
+        if source.stat().st_size>200000: raise Blocked('file exceeds edit limit')
+        content=source.read_text()
+        if content.count(old)!=1: raise Blocked('edit requires exactly one matching source text')
+        result=content.replace(old,new,1)
+        if len(result)>200000: raise Blocked('edit exceeds write limit')
+        return self.write(path,result)
     def diff(self,base,head):
         names=git(self.repo,'diff','--no-renames','--name-only','-z',base,head).split('\0')
         allowed=[]
@@ -140,13 +176,16 @@ class Orchestrator:
                 (copy/'.orchestrator-tmp').mkdir(exist_ok=True)
                 commands=self.config.get('setup',[])+[check['command']]
                 status=True
-                for command in commands:
+                for command_index,command in enumerate(commands):
+                    stage='check' if command_index==len(commands)-1 else 'setup'
+                    command_name=Path(command[0]).name
                     if self.config['test_mode']=='docker':
                         command=['docker','run','--rm','--user',f'{os.getuid()}:{os.getgid()}','--env','HOME=/workspace/.orchestrator-home','--env','TMPDIR=/workspace/.orchestrator-tmp','--cap-drop=ALL','--security-opt=no-new-privileges','--pids-limit=256','--memory=2g','-v',str(copy)+':/workspace','-w','/workspace',self.config.get('image','node:24-bookworm'),*command]
                     r=(execute(command,copy) if self.config['test_mode']=='docker' else local_check(command,copy)); status=status and r.returncode==0
                     if not status: break
-                # Candidate output is untrusted and may contain secrets: only status goes to artifacts.
-                results.append({'name':check['name'],'passed':status})
+                result={'name':check['name'],'passed':status,'stage':stage,'command_name':command_name,'exit_code':r.returncode}
+                if not status: result['diagnostics']=check_diagnostics(r.stdout,r.stderr)
+                results.append(result)
         return results
     def run(self,task,review_only=False,base=None,head=None,isolated_candidate=False):
         report={'approved':False,'rounds':0,'checks':[],'verdict':None}; lock=None; locked=False
