@@ -10,6 +10,10 @@ on:
         description: Tracking identifier
         default: manual
         type: string
+      candidate_ref:
+        description: Optional existing candidate to recheck without another author
+        default: ''
+        type: string
   workflow_call:
     inputs:
       task:
@@ -17,6 +21,9 @@ on:
         type: string
       task_id:
         default: manual
+        type: string
+      candidate_ref:
+        default: ''
         type: string
     secrets:
       ANTHROPIC_API_KEY:
@@ -45,7 +52,7 @@ jobs:
       - name: Checkout isolated candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.candidate_ref || github.sha }}
           path: candidate
           fetch-depth: 0
           persist-credentials: false
@@ -62,11 +69,17 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AGENT_ORCHESTRATOR_FREEZE: ${{ vars.AGENT_ORCHESTRATOR_FREEZE }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref }}
         run: |
-          python trusted/scripts/agent_orchestrator/runner.py run \
+          MODE=(run --isolated-candidate)
+          if [ -n "$CANDIDATE_REF" ]; then
+            HEAD=$(git -C candidate rev-parse HEAD)
+            MODE=(review --base "$GITHUB_SHA" --head "$HEAD")
+          fi
+          python trusted/scripts/agent_orchestrator/runner.py "${MODE[@]}" \
             --repo "$GITHUB_WORKSPACE/candidate" --task-file "$GITHUB_WORKSPACE/state/task.txt" \
             --config "$GITHUB_WORKSPACE/trusted/.agent-orchestrator.json" \
-            --output "$GITHUB_WORKSPACE/state" --backend anthropic --isolated-candidate
+            --output "$GITHUB_WORKSPACE/state" --backend anthropic
       - name: Package reviewed commits
         working-directory: candidate
         run: |

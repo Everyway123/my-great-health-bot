@@ -22,6 +22,7 @@ class DockerTransportTests(unittest.TestCase):
                 result=Orchestrator(repo,config,root/'out',None).checks()
             self.assertTrue(result[0]['passed']); data=json.loads(record.read_text()); args=data['args']
             self.assertIn('--user',args); self.assertEqual(args[args.index('--user')+1],f'{os.getuid()}:{os.getgid()}')
+            self.assertIn('--memory=4g',args); self.assertIn('NODE_OPTIONS=--max-old-space-size=3072',args)
             self.assertIn('HOME=/workspace/.orchestrator-home',args); self.assertIn('TMPDIR=/workspace/.orchestrator-tmp',args)
             self.assertTrue(data['private_home_exists']); self.assertTrue(data['private_tmp_exists'])
             self.assertNotIn('ANTHROPIC_API_KEY',data['env']); self.assertNotIn('GITHUB_TOKEN',data['env'])

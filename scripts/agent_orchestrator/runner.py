@@ -180,11 +180,16 @@ class Orchestrator:
                     stage='check' if command_index==len(commands)-1 else 'setup'
                     command_name=Path(command[0]).name
                     if self.config['test_mode']=='docker':
-                        command=['docker','run','--rm','--user',f'{os.getuid()}:{os.getgid()}','--env','HOME=/workspace/.orchestrator-home','--env','TMPDIR=/workspace/.orchestrator-tmp','--cap-drop=ALL','--security-opt=no-new-privileges','--pids-limit=256','--memory=2g','-v',str(copy)+':/workspace','-w','/workspace',self.config.get('image','node:24-bookworm'),*command]
+                        command=['docker','run','--rm','--user',f'{os.getuid()}:{os.getgid()}','--env','HOME=/workspace/.orchestrator-home','--env','TMPDIR=/workspace/.orchestrator-tmp','--env','NODE_OPTIONS=--max-old-space-size=3072','--cap-drop=ALL','--security-opt=no-new-privileges','--pids-limit=256','--memory=4g','-v',str(copy)+':/workspace','-w','/workspace',self.config.get('image','node:24-bookworm'),*command]
                     r=(execute(command,copy) if self.config['test_mode']=='docker' else local_check(command,copy)); status=status and r.returncode==0
                     if not status: break
                 result={'name':check['name'],'passed':status,'stage':stage,'command_name':command_name,'exit_code':r.returncode}
-                if not status: result['diagnostics']=check_diagnostics(r.stdout,r.stderr)
+                if not status:
+                    result['diagnostics']=check_diagnostics(r.stdout,r.stderr)
+                    oom=bool(re.search(r'(?:out of memory|heap limit|oom[- ]kill)',(r.stdout or '')+'\n'+(r.stderr or ''),re.I))
+                    if r.returncode==137 or (r.returncode==134 and oom):
+                        result['diagnostics'].update(kind='resource_limit',resource_reason='memory limit or external termination' if r.returncode==137 else 'runtime reported out of memory')
+                        results.append(result); return results
                 results.append(result)
         return results
     def run(self,task,review_only=False,base=None,head=None,isolated_candidate=False):
@@ -214,6 +219,7 @@ class Orchestrator:
                 if not review_only and not git(self.repo,'diff','--name-only',base,'HEAD'): raise Blocked('author produced no candidate changes')
                 names=(git(self.repo,'diff','--name-only','-z',base,'HEAD').split('\0') if review_only else self.boundary(base)); names=list(filter(None,names)); sha=git(self.repo,'rev-parse','HEAD'); report['head_sha']=sha
                 report['checks']=self.checks(); self.freeze()
+                if any(c.get('diagnostics',{}).get('kind')=='resource_limit' for c in report['checks']): raise Blocked('check environment resource unavailable; change trusted resource policy before retrying')
                 if git(self.repo,'rev-parse','HEAD')!=sha or git(self.repo,'status','--porcelain'): raise Blocked('candidate changed during checks')
                 evidence={'base_sha':base,'head_sha':sha,'checks':report['checks'],'diff':FileTools(self.repo,self.config).diff(base,sha)}
                 verdict=validate_verdict(self.provider.review(task,FileTools(self.repo,self.config),evidence),sha); report['verdict']=json.loads(redact(json.dumps(verdict)))

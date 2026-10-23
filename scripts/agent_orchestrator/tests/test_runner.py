@@ -144,6 +144,20 @@ class RunnerTests(unittest.TestCase):
         for name in ('.github/test.yml','.env','src/auth.py','scripts/agent_orchestrator/runner.py'):
             with self.assertRaises(Blocked): tools.edit(name,'old','new')
         with self.assertRaises(Blocked): FileTools(self.repo,self.config).edit('edit.txt','first','bad')
+    def test_resource_failure_stops_without_code_repairs_or_review(self):
+        base=subprocess.check_output(['git','-C',str(self.repo),'rev-parse','HEAD'],text=True).strip()
+        for exit_code,output in [(134,'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory'),(137,'killed')]:
+            with self.subTest(exit_code=exit_code):
+                subprocess.run(['git','-C',str(self.repo),'reset','--hard',base],capture_output=True,check=True)
+                config=dict(self.config,checks=[{'name':'build','command':['python3','-c','print('+repr(output)+');raise SystemExit('+str(exit_code)+')']}])
+                p=Provider(); r=Orchestrator(self.repo,config,self.root/('out'+str(exit_code)),p).run('task',isolated_candidate=True)
+                self.assertFalse(r['approved']); self.assertEqual(p.authors,1); self.assertEqual(p.reviews,0)
+                self.assertEqual(r['checks'][0]['diagnostics']['kind'],'resource_limit')
+                self.assertIn('resource',r['reason'])
+    def test_oom_text_without_resource_exit_is_regular_failure(self):
+        self.config['checks']=[{'name':'build','command':['python3','-c','print("JavaScript heap out of memory");raise SystemExit(1)']}]
+        result=Orchestrator(self.repo,self.config,self.root/'out',Provider()).checks()[0]
+        self.assertNotEqual(result['diagnostics']['kind'],'resource_limit')
     def test_provider_failure_fails_closed(self):
         class Broken(Provider):
             def review(self,*args): raise RuntimeError('provider unavailable')
