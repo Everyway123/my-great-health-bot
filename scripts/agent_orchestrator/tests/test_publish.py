@@ -117,6 +117,7 @@ class PublisherTests(unittest.TestCase):
                     if command[0]=='gh':
                         if '/statuses/' in command[2]:
                             self.status_body=json.loads(Path(command[-1]).read_text())
+                            self.status_bodies=getattr(self,'status_bodies',[])+[self.status_body]
                             value='{}'
                         elif command[1]=='pr':
                             self.body=Path(command[-1]).read_text()
@@ -137,13 +138,16 @@ class PublisherTests(unittest.TestCase):
             remote_preflight=next(c for c in obj.calls if c[0]=='git' and 'ls-remote' in c)
             self.assertIn('credential.helper=!gh auth git-credential',remote_preflight)
             self.assertEqual(obj.status_body['state'],'success')
-            self.assertEqual(obj.status_body['context'],'agent-orchestrator/review')
+            self.assertEqual([body['context'] for body in obj.status_bodies],['agent-orchestrator/human-release','agent-orchestrator/review'])
             self.assertNotIn('secret',json.dumps(obj.status_body))
             status_index=next(i for i,c in enumerate(obj.calls) if c[0]=='gh' and '/statuses/' in c[2])
             pr_index=next(i for i,c in enumerate(obj.calls) if c[:2]==['gh','pr'])
             self.assertLess(status_index,pr_index)
             self.assertNotIn('secret task detail',obj.body)
             self.assertNotIn('$(touch',str(obj.calls))
+            nondefault=Fake(target,'owner/repo'); nondefault.calls=[]
+            nondefault.publish(bundle,g,task,'other', 'https://github.com/owner/repo/actions/runs/123','feature')
+            self.assertEqual([body['context'] for body in nondefault.status_bodies],['agent-orchestrator/nondefault-human-release','agent-orchestrator/nondefault-review'])
             obj=Fake(target,'owner/repo'); obj.calls=[]; obj.stale_before_pr=True
             with self.assertRaises(p.Blocked): obj.publish(bundle,g,task,'id','https://github.com/owner/repo/actions/runs/123')
             self.assertFalse(any(c[:2]==['gh','pr'] for c in obj.calls))

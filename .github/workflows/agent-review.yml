@@ -1,7 +1,7 @@
 name: Independent agent review
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 permissions:
   contents: read
 concurrency:
@@ -10,19 +10,34 @@ concurrency:
 jobs:
   review:
     name: Independent review and checks
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
       contents: read
       statuses: write
+      pull-requests: read
     steps:
       - name: Checkout trusted base runner
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: trusted
           persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Invalidate both gates before review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python trusted/scripts/agent_orchestrator/report_status.py \
+            --repository "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --base "$BASE_SHA" \
+            --pr-number "$PR_NUMBER" --pending --report "$GITHUB_WORKSPACE/state/report.json" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Checkout candidate as data only
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -30,9 +45,6 @@ jobs:
           path: candidate
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
       - name: Independently review exact candidate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -54,10 +66,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           python trusted/scripts/agent_orchestrator/report_status.py \
-            --repository "$GITHUB_REPOSITORY" --head "$HEAD_SHA" \
-            --report "$GITHUB_WORKSPACE/state/report.json" \
+            --repository "$GITHUB_REPOSITORY" --head "$HEAD_SHA" --base "$BASE_SHA" \
+            --pr-number "$PR_NUMBER" --report "$GITHUB_WORKSPACE/state/report.json" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: Preserve safe verdict
         if: always()

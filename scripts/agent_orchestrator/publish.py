@@ -170,7 +170,8 @@ class Publisher:
         base, head = g['base_sha'], g['head_sha']
         if self.git('rev-parse', 'HEAD') != base or self.git('status', '--porcelain'):
             raise Blocked('publisher checkout must be a clean trusted baseline')
-        default = base_branch or self.gh('api', 'repos/' + self.repository, '--jq', '.default_branch')
+        repository_default=self.gh('api','repos/'+self.repository,'--jq','.default_branch')
+        default=base_branch or repository_default
         if default.startswith('-'): raise Blocked('invalid base branch')
         self.git('check-ref-format', '--branch', default)
         self.ensure_current_base(base, default)
@@ -192,12 +193,14 @@ class Publisher:
         self.ensure_current_base(base, default)
         self.ensure_unfrozen()
         self.git('-c', 'credential.helper=!gh auth git-credential', 'push', remote, head + ':refs/heads/' + branch)
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json') as status_body:
-            json.dump({'state':'success', 'context':'agent-orchestrator/review',
-                       'description':'review passed', 'target_url':run_url}, status_body)
-            status_body.flush()
-            self.gh('api', 'repos/' + self.repository + '/statuses/' + head,
-                    '--method', 'POST', '--input', status_body.name)
+        prefix='agent-orchestrator/' if default==repository_default else 'agent-orchestrator/nondefault-'
+        # This publisher only accepts fully approved ordinary candidates. Sensitive
+        # changes are never released here; reporter/manual release handle those.
+        for suffix in ('human-release','review'):
+            with tempfile.NamedTemporaryFile(mode='w',suffix='.json') as status_body:
+                json.dump({'state':'success','context':prefix+suffix,'description':'human release not required' if suffix=='human-release' else 'review passed','target_url':run_url},status_body)
+                status_body.flush()
+                self.gh('api','repos/'+self.repository+'/statuses/'+head,'--method','POST','--input',status_body.name)
         self.ensure_current_base(base, default)
         self.ensure_unfrozen()
         body = ('Approved orchestration candidate.\n\nBase: `' + base + '`\nHead: `' + head + '`\n'

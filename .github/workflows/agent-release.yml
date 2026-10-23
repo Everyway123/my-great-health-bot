@@ -1,0 +1,54 @@
+name: Explicit human agent release
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open same-repository PR targeting the default branch
+        type: string
+        required: true
+      head_sha:
+        description: Exact independently reviewed candidate SHA
+        type: string
+        required: true
+      base_sha:
+        description: Exact reviewed default-branch base SHA
+        type: string
+        required: true
+      decision:
+        description: Explicit approval to release this candidate
+        type: choice
+        options: [approve]
+        required: true
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: read
+  actions: read
+concurrency:
+  group: agent-human-release-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted default-branch release gate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Validate explicit human release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          DECISION: ${{ inputs.decision }}
+          RELEASE_ACTOR: ${{ github.actor }}
+        run: |
+          python scripts/agent_orchestrator/release.py \
+            --repository "$GITHUB_REPOSITORY" --pr-number "$PR_NUMBER" \
+            --head "$HEAD_SHA" --base "$BASE_SHA" --actor "$RELEASE_ACTOR" \
+            --decision "$DECISION" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
