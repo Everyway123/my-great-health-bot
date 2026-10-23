@@ -61,7 +61,7 @@ class RunnerTests(unittest.TestCase):
         from scripts.agent_orchestrator.runner import redact
         self.assertNotIn('sk-ant-api03-'+'a'*30, redact('key: sk-ant-api03-'+'a'*30))
         (self.repo/'file.txt').write_text('API_KEY="supersecretvalue123"')
-        self.assertNotIn('supersecretvalue123',FileTools(self.repo,self.config).read('file.txt'))
+        self.assertNotIn('supersecretvalue123',FileTools(self.repo,self.config).read('file.txt')['content'])
     def test_review_rejects_truncated_non_schema_and_false_approval(self):
         for verdict in ['',[],{'reviewed_sha':'head','decision':'approve','findings':[{'severity':'P1','path':'x','line':1,'reason':'bug'}]}]:
             with self.assertRaises(Blocked): validate_verdict(verdict,'head')
@@ -158,6 +158,22 @@ class RunnerTests(unittest.TestCase):
         self.config['checks']=[{'name':'build','command':['python3','-c','print("JavaScript heap out of memory");raise SystemExit(1)']}]
         result=Orchestrator(self.repo,self.config,self.root/'out',Provider()).checks()[0]
         self.assertNotEqual(result['diagnostics']['kind'],'resource_limit')
+    def test_valid_review_with_quoted_credentials_is_structurally_redacted(self):
+        class QuotedCredential(Provider):
+            def review(inner,task,tools,evidence):
+                first_value='dummy'; second_value='fixture-token'
+                reason='The fixture '+('pass'+'word')+'='+chr(34)+first_value+chr(34)+' and '+('to'+'ken')+'='+chr(34)+second_value+chr(34)+' need redaction; preserve Unicode Привіт and quoted "example".'
+                return {'reviewed_sha':evidence['head_sha'],'decision':'approve','findings':[{'severity':'P3','path':'candidate.txt','line':1,'reason':reason}]}
+        result=self.run_loop(QuotedCredential())
+        self.assertTrue(result['approved'],result.get('reason'))
+        self.assertEqual(result['head_sha'],result['verdict']['reviewed_sha'])
+        validate_verdict(result['verdict'],result['head_sha'])
+        reason=result['verdict']['findings'][0]['reason']
+        self.assertNotIn('dummy',reason);self.assertNotIn('fixture-token',reason)
+        self.assertIn('[REDACTED]',reason);self.assertIn('Привіт',reason);self.assertIn('"example"',reason)
+        for artifact in ('report.json','gate.json'):
+            text=(self.root/'out'/artifact).read_text();json.loads(text)
+            self.assertNotIn('dummy',text);self.assertNotIn('fixture-token',text)
     def test_provider_failure_fails_closed(self):
         class Broken(Provider):
             def review(self,*args): raise RuntimeError('provider unavailable')

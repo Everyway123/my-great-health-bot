@@ -23,9 +23,17 @@ def redact(value):
     text=re.sub(r'(?i)((?:api[_-]?key|token|secret|password)\s*[=:]\s*[\x22\x27]?)[^\s\x22\x27,;]+',r'\1[REDACTED]',text)
     text=re.sub(r'(?i)((?:api[_-]?key|token|secret|password|cookie)[\x22\x27]\s*:\s*[\x22\x27])[^\x22\x27]+',r'\1[REDACTED]',text)
     text=re.sub(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/-]+=*',r'\1[REDACTED]',text)
-    text=re.sub(r'([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@',r'\1[REDACTED]@',text)
+    text=re.sub(r'([a-zA-Z][a-zA-Z0-9+.-]{0,31}://)[^\s/@:]+:[^\s/@]+@',r'\1[REDACTED]@',text)
     text=re.sub(r'-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----','[REDACTED]',text,flags=re.S)
     return text
+
+
+def redact_structure(value):
+    """Copy JSON-shaped data, redacting string leaves before serialization."""
+    if isinstance(value,str): return redact(value)
+    if isinstance(value,list): return [redact_structure(item) for item in value]
+    if isinstance(value,dict): return {key:redact_structure(item) for key,item in value.items()}
+    return value
 
 
 def check_diagnostics(stdout,stderr):
@@ -90,27 +98,47 @@ class FileTools:
         if p.is_absolute() or '..' in p.parts or not p.parts: raise Blocked('path outside candidate')
         full=self.repo/p
         if not full.resolve().is_relative_to(self.repo): raise Blocked('symlink outside candidate')
-        lowered=[x.lower() for x in p.parts]
-        forbidden=any(x=='.git' or x.startswith('.env') or any(word in x for word in ('secret','credential')) for x in lowered)
-        sensitive=any(any(word in x for word in ('auth','security')) for x in lowered)
-        runner='agent_orchestrator' in p.parts or p.name in ('.agent-orchestrator.json','.gitignore','.gitattributes','.gitmodules','.npmrc','.pypirc','Dockerfile','docker-compose.yml')
-        extra=any(fnmatch.fnmatch(p.as_posix(),pat) for pat in self.config.get('protected_paths',[]))
-        if forbidden or (writing and ('.github' in p.parts or sensitive or runner or extra)): raise Blocked('protected candidate path')
+        for checked in (p,full.resolve().relative_to(self.repo)):
+            lowered=[x.lower() for x in checked.parts]
+            forbidden=any(x=='.git' or x.startswith('.env') or any(word in x for word in ('secret','credential')) for x in lowered)
+            sensitive=any(any(word in x for word in ('auth','security')) for x in lowered)
+            runner='agent_orchestrator' in checked.parts or checked.name in ('.agent-orchestrator.json','.gitignore','.gitattributes','.gitmodules','.npmrc','.pypirc','Dockerfile','docker-compose.yml')
+            extra=any(fnmatch.fnmatch(checked.as_posix(),pat) for pat in self.config.get('protected_paths',[]))
+            if forbidden or (writing and ('.github' in checked.parts or sensitive or runner or extra)): raise Blocked('protected candidate path')
         return full
-    def list(self):
+    @staticmethod
+    def pagination(offset,limit,maximum):
+        if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=maximum: raise Blocked('invalid pagination; use nonnegative integer offset and bounded positive integer limit')
+    @staticmethod
+    def page(value,offset,limit,key):
+        total=len(value)
+        if offset>total: raise Blocked('pagination offset exceeds total')
+        count=min(limit,total-offset)
+        while True:
+            result={key:value[offset:offset+count],'total':total,'offset':offset,'returned':count,'next_offset':offset+count if offset+count<total else None}
+            if len(json.dumps(result,ensure_ascii=False).encode('utf-8'))<=160000: return result
+            if count<=1: raise Blocked('single page item exceeds transport budget')
+            count//=2
+    def list(self,prefix='',offset=0,limit=200):
+        self.pagination(offset,limit,2000)
+        if not isinstance(prefix,str): raise Blocked('list prefix must be relative text')
+        if prefix: self.path(prefix)
         files=[]
         for directory, dirs, names in os.walk(self.repo,followlinks=False):
-            dirs[:]=[d for d in dirs if d not in ('.git','node_modules','.venv','venv','dist','build') and not d.startswith('.env')]
-            for name in names:
-                if len(files)>=3000: return files
-                p=Path(directory)/name
-                try: self.path(p.relative_to(self.repo).as_posix()); files.append(p.relative_to(self.repo).as_posix())
+            dirs[:]=sorted(d for d in dirs if d not in ('.git','node_modules','.venv','venv','dist','build') and not d.startswith('.env'))
+            for name in sorted(names):
+                relative=(Path(directory)/name).relative_to(self.repo).as_posix()
+                if not relative.startswith(prefix): continue
+                try: self.path(relative); files.append(relative)
                 except Blocked: pass
-        return files
-    def read(self,path):
+        return self.page(sorted(files),offset,limit,'files')
+    def read(self,path,offset=0,limit=20000):
+        self.pagination(offset,limit,200000)
         p=self.path(path)
-        if p.stat().st_size>200000: raise Blocked('file exceeds read limit')
-        return redact(p.read_text())
+        if p.stat().st_size>8*1024*1024: raise Blocked('file exceeds 8 MiB source limit')
+        # Redact the complete source before slicing, so credentials spanning page
+        # boundaries cannot leak through individually innocuous partial strings.
+        return self.page(redact(p.read_text()),offset,limit,'content')
     def write(self,path,content):
         if not self.writable: raise Blocked('review tools are read-only')
         if not isinstance(content,str) or len(content)>200000: raise Blocked('write exceeds limit')
@@ -144,8 +172,17 @@ class Orchestrator:
     def freeze(self):
         if type(self.config.get('frozen',False)) is not bool or self.config.get('frozen',False): raise Blocked('trusted orchestration policy is frozen or invalid')
         if os.environ.get('AGENT_ORCHESTRATOR_FREEZE','').strip().lower() not in ('','false','0') or (self.config.get('freeze_file') and Path(self.config['freeze_file']).exists()): raise Blocked('orchestration frozen')
+    def check_source_paths(self):
+        paths=self.config.get('check_source_paths',[])
+        if type(paths) is not list: raise Blocked('invalid check source path policy')
+        for name in paths:
+            if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.@/-]+',name) or Path(name).suffix!='.ts': raise Blocked('invalid check source path policy')
+            if any(part in ('','.','..') or part.lower()=='.git' or part.lower().startswith('.env') for part in name.split('/')): raise Blocked('invalid check source path policy')
+        if len(paths)!=len(set(paths)): raise Blocked('invalid check source path policy')
+        return set(paths)
     def config_check(self):
         c=self.config
+        self.check_source_paths()
         if c.get('schema')!=1 or c.get('test_mode') not in ('docker','local') or type(c.get('max_repair_rounds',2)) is not int or not 0<=c.get('max_repair_rounds',2)<=2: raise Blocked('invalid configuration')
         if not c.get('checks'): raise Blocked('required checks missing')
         for command in [x.get('command') for x in c['checks']]+c.get('setup',[]):
@@ -158,6 +195,11 @@ class Orchestrator:
         for name in filter(None,names): t.path(name,True)
         return list(filter(None,names))
     def checks(self):
+        allowed_sources=self.check_source_paths()
+        tracked=list(filter(None,git(self.repo,'ls-files','-z').split('\0')))
+        for name in allowed_sources:
+            source=self.repo/name
+            if name not in tracked or not source.is_file() or source.is_symlink() or not source.resolve().is_relative_to(self.repo) or any((self.repo/Path(*Path(name).parts[:index])).is_symlink() for index in range(1,len(Path(name).parts))): raise Blocked('allowlisted check source missing, untracked, or unsafe')
         results=[]
         for check in self.config['checks']:
             self.freeze()
@@ -166,9 +208,10 @@ class Orchestrator:
                 copy.mkdir()
                 # Only committed candidate files enter the check environment. Ignored or
                 # untracked CLI side effects cannot silently influence SHA-bound checks.
-                for name in filter(None,git(self.repo,'ls-files','-z').split('\0')):
+                for name in tracked:
                     relative=Path(name)
-                    if any(p=='.git' or p.startswith('.env') or 'credential' in p.lower() or 'secret' in p.lower() for p in relative.parts): continue
+                    if any(p.lower()=='.git' or p.lower().startswith('.env') for p in relative.parts): continue
+                    if name not in allowed_sources and any('credential' in p.lower() or 'secret' in p.lower() for p in relative.parts): continue
                     source=self.repo/relative
                     if source.is_symlink() or not source.resolve().is_relative_to(self.repo): raise Blocked('candidate contains symlinks; isolated check refused')
                     target=copy/relative; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(source,target)
@@ -222,7 +265,9 @@ class Orchestrator:
                 if any(c.get('diagnostics',{}).get('kind')=='resource_limit' for c in report['checks']): raise Blocked('check environment resource unavailable; change trusted resource policy before retrying')
                 if git(self.repo,'rev-parse','HEAD')!=sha or git(self.repo,'status','--porcelain'): raise Blocked('candidate changed during checks')
                 evidence={'base_sha':base,'head_sha':sha,'checks':report['checks'],'diff':FileTools(self.repo,self.config).diff(base,sha)}
-                verdict=validate_verdict(self.provider.review(task,FileTools(self.repo,self.config),evidence),sha); report['verdict']=json.loads(redact(json.dumps(verdict)))
+                verdict=validate_verdict(self.provider.review(task,FileTools(self.repo,self.config),evidence),sha)
+                verdict=validate_verdict(redact_structure(verdict),sha)
+                report['verdict']=verdict
                 self.freeze()
                 if git(self.repo,'rev-parse','HEAD')!=sha or git(self.repo,'status','--porcelain'): raise Blocked('candidate changed during review')
                 manual=any(fnmatch.fnmatch(n,p) for n in names for p in self.config.get('manual_review_paths',[]))

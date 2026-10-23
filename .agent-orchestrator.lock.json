@@ -1,17 +1,17 @@
 {
   "schema": 1,
   "source_repository": "Everyway123/life_OS",
-  "source_commit": "e565b7d9ce9024151ca53705c1d2e472e00b2f4e",
+  "source_commit": "5e51b58de3a2207ac8baa9cc3378903074772b7d",
   "sha256": {
-    "scripts/agent_orchestrator/runner.py": "8ca10f5228652381516f5e68a578a7c5792a893925f0112d72b0a781c7e5c44d",
+    "scripts/agent_orchestrator/runner.py": "b4c216f2416aac9aeb11c5ed5c1122bdd4410be76a9294b403da0b3050857d90",
     "scripts/agent_orchestrator/release.py": "653b2d4eb802b0bac34e3b426ef364c3a6314e9002831e127edfd5d18c40f0de",
     "scripts/agent_orchestrator/__init__.py": "646737a303a4e7e0d528774744ef8326366e6b181daf4cc6ecca8ca66cb6b135",
-    "scripts/agent_orchestrator/providers.py": "65a8c45a00ddb712aa4e07b33cb97e1511e0e8f3b3d5cb4010bbfd5583f2ca83",
+    "scripts/agent_orchestrator/providers.py": "202f3f7792525bd04d844618858b56a30f71484deb156488524bf6f123503b9e",
     "scripts/agent_orchestrator/report_status.py": "e0d900189a6a5de728f35134900382a92fc348dd41d8192d768b7c45b68658dd",
     "scripts/agent_orchestrator/publish.py": "0119fdc9671ec788eb95bcfc6b67bf0de5e13d294d6d46a87eb80a5d43a520c8",
     "scripts/agent_orchestrator/tests/test_release.py": "0b1565828b2d3384e7b57c3bf9beb405b810e0973f7b4d2930b50965cecad6bf",
     "scripts/agent_orchestrator/tests/test_providers.py": "00f057da7bf1745dc29cdee7b4a1e8bf845539332e5c78763ea136aa48f35319",
-    "scripts/agent_orchestrator/tests/test_runner.py": "b459e6ffe7a8cf6456b0642e3c40fafeb5a1225592ecd0add6ed015a47348c5f",
+    "scripts/agent_orchestrator/tests/test_runner.py": "b4f7efc2b62497c4e3a295522c994d8f35197fb90c55fa3694385f1e1e91099f",
     "scripts/agent_orchestrator/tests/test_report_status.py": "bb4593906e6c5326034fedb6c7b4786e7675fc668238b97171189cd4f2d4dfb4",
     "scripts/agent_orchestrator/tests/test_sandbox.py": "66518a2191614af9d7dac64495991f1ea7c780e18070e4ee6d8eff47a88225ee",
     "scripts/agent_orchestrator/tests/test_publish.py": "f8a336313c294cacca36ac7c9ab2547b5c403bceca971ce424919d681383b9a2",
@@ -20,6 +20,8 @@
     ".github/workflows/agent-review.yml": "30a66402a3fddd45045355cc88ded9e61cb741ff3860b71830e6e410e64b79da",
     ".github/workflows/agent-runner-tests.yml": "fce4e56bb0707aec060c2e5da8048fc527055886057d61776b645ebccb3e516f",
     ".github/workflows/agent-release.yml": "96ad05968fa4ea7e02a7754b6e246fb2506e8f929151fbaf03ed9817d546b3c4",
-    "scripts/agent_orchestrator/tests/test_runner_exit.py": "27df658f9d27fa320a81bfe818d4ccbb7af789901e961ef6d9a0d621b654bfa5"
+    "scripts/agent_orchestrator/tests/test_runner_exit.py": "27df658f9d27fa320a81bfe818d4ccbb7af789901e961ef6d9a0d621b654bfa5",
+    "scripts/agent_orchestrator/tests/test_file_paging.py": "56c4d367bbd776fb27c77fdd9c168e88fb5fb8318cd9ad95401c88ee91e02c78",
+    "scripts/agent_orchestrator/tests/test_check_sources.py": "e0bce65017a540e23b114cc9fcf146673009daf57a261ceb6ded38156b9d2dca"
   }
 }
