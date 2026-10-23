@@ -260,7 +260,12 @@ def main():
         config=json.loads(Path(args.config).read_text()); provider=(AnthropicProvider if args.backend=='anthropic' else CLIProvider)(config)
         if args.action=='review' and (not args.base or not args.head): raise Blocked('review requires base and head')
         r=Orchestrator(args.repo,config,args.output,provider).run(Path(args.task_file).read_text(),args.action=='review',args.base,args.head,args.isolated_candidate)
-        print(json.dumps({'approved':r['approved'],'reason':r.get('reason')})); return 0 if r['approved'] else 1
+        print(json.dumps({'approved':r['approved'],'reason':r.get('reason')}))
+        if args.action=='review':
+            try: from .report_status import status_payload
+            except ImportError: from report_status import status_payload
+            return 0 if status_payload(r,args.head,args.base)['state']=='success' else 1
+        return 0 if r['approved'] else 1
     except Exception:
         print('orchestration preflight failed'); return 1
 
