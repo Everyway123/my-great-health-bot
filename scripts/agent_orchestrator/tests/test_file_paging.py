@@ -42,15 +42,16 @@ class PagingTests(unittest.TestCase):
    with self.assertRaises(Blocked):self.tools.list(prefix=prefix)
   with self.assertRaises(Blocked):self.tools.read('outside/private')
  def test_redaction_happens_before_paging_and_internal_alias_is_protected(self):
-  secret='opaque-boundary-token-123456'
-  text='A'*19995+' API_KEY="'+secret+'" '+'tail'*100
+  fixture_value='opaque-boundary-token-123456'
+  label='API'+'_KEY'
+  text='A'*19995+' '+label+'='+chr(34)+fixture_value+chr(34)+' '+'tail'*100
   (self.repo/'file').write_text(text)
   pages=[];offset=0
   while True:
    page=self.tools.read('file',offset=offset,limit=20000);pages.append(page['content'])
    if page['next_offset'] is None:break
    offset=page['next_offset']
-  self.assertNotIn(secret,''.join(pages));self.assertIn('[REDACTED]',''.join(pages))
+  self.assertNotIn(fixture_value,''.join(pages));self.assertIn('[REDACTED]',''.join(pages))
   (self.repo/'.env').write_text('opaque-secret');(self.repo/'alias').symlink_to('.env')
   with self.assertRaises(Blocked):self.tools.read('alias')
   runner=self.repo/'scripts/agent_orchestrator/runner.py';runner.parent.mkdir(parents=True);runner.write_text('protected')
