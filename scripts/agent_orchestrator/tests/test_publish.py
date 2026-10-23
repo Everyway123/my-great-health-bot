@@ -152,7 +152,7 @@ class PublisherTests(unittest.TestCase):
                 with self.subTest(frozen=frozen), self.assertRaises(p.Blocked): obj.publish(bundle,g,task,'policy','https://github.com/owner/repo/actions/runs/123')
                 self.assertFalse(any(c[0]=='git' and 'push' in c for c in obj.calls))
             obj=Fake(target,'owner/repo'); obj.calls=[]; obj.policy={'checks':[{'name':'unit'}],'require_database_freeze':True}; obj.database_freeze_second=True
-            with patch.dict(os.environ,{'DATABASE_URL':'fixture-database-url'}), self.assertRaises(p.Blocked):
+            with patch.dict(os.environ,{'DATABASE_URL':'postgresql://dummy:dummy@127.0.0.1:1/dummy'}), self.assertRaises(p.Blocked):
                 obj.publish(bundle,g,task,'db-twice','https://github.com/owner/repo/actions/runs/123')
             self.assertEqual(obj.database_count,2)
             self.assertFalse(any(c[:2]==['gh','pr'] for c in obj.calls))
@@ -173,6 +173,34 @@ class PublisherTests(unittest.TestCase):
             result=subprocess.CompletedProcess(command,1,'private-output','private-error')
             with patch.object(p.subprocess,'run',return_value=result), self.assertRaises(p.Blocked) as error: obj.run(command)
             self.assertIn(label,str(error.exception)); self.assertNotIn('private',str(error.exception)); self.assertNotIn('secret',str(error.exception))
+
+    def test_database_uri_decoded_to_scoped_pg_environment(self):
+        obj=p.Publisher(Path('.'),'owner/repo')
+        uri='postgresql://u%40ser:p%3Aa%2Fss@127.0.0.1:1/db%20name?sslmode=require&channel_binding=require&connect_timeout=2'
+        original={'DATABASE_URL':uri,'PGHOST':'old-host','PGPASSWORD':'old-password','PGSERVICE':'old-service'}
+        result=subprocess.CompletedProcess([],0,'BEGIN\nf\nROLLBACK','')
+        with patch.dict(os.environ,original,clear=True), patch.object(p.subprocess,'run',return_value=result) as run:
+            obj.ensure_unfrozen(); args=run.call_args.args[0]; env=run.call_args.kwargs['env']
+            self.assertEqual((env['PGHOST'],env['PGPORT'],env['PGUSER'],env['PGPASSWORD'],env['PGDATABASE']),('127.0.0.1','1','u@ser','p:a/ss','db name'))
+            self.assertEqual((env['PGSSLMODE'],env['PGCHANNELBINDING'],env['PGCONNECT_TIMEOUT']),('require','require','2'))
+            self.assertNotIn('PGSERVICE',env); self.assertNotIn(uri,str(args)); self.assertNotIn('p:a/ss',str(args))
+            self.assertEqual(dict(os.environ),original)
+    def test_database_uri_malformed_fails_closed_without_details(self):
+        obj=p.Publisher(Path('.'),'owner/repo')
+        for uri in ('not-a-uri','https://dummy:private@host/db','postgresql://u:p@host:0/db','postgresql://u:p@host:notaport/db','postgresql://u:p@host/db?unknown=private','postgresql://u:p@host/db?connect_timeout=9999'):
+            with patch.dict(os.environ,{'DATABASE_URL':uri}), self.subTest(uri=uri), self.assertRaises(p.Blocked) as error:
+                obj.ensure_unfrozen()
+            self.assertEqual(str(error.exception),'invalid database connection configuration')
+    def test_real_psql_uses_remote_endpoint_not_local_socket(self):
+        import shutil
+        if not shutil.which('psql'): self.skipTest('optional psql transport probe: psql unavailable')
+        actual=subprocess.run; records=[]
+        def transport(*args,**kwargs):
+            result=actual(*args,**kwargs); records.append(result); return result
+        obj=p.Publisher(Path('.'),'owner/repo')
+        with patch.dict(os.environ,{'DATABASE_URL':'postgresql://dummy:dummy@127.0.0.1:1/dummy?connect_timeout=1'}), patch.object(p.subprocess,'run',side_effect=transport), self.assertRaises(p.Blocked): obj.ensure_unfrozen()
+        self.assertIn('127.0.0.1',records[0].stderr); self.assertNotIn('/tmp/.s.PGSQL',records[0].stderr)
+        self.assertNotIn('postgresql://',str(records[0].args))
 
     def test_real_bundle_import_matches_head(self):
         with tempfile.TemporaryDirectory() as d:

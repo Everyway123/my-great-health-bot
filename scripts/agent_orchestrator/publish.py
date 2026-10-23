@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, unquote, parse_qsl
 
 
 class Blocked(Exception):
@@ -71,6 +71,27 @@ def branch_name(task_id, sha):
     return 'agent-orchestrator/' + slug + '-' + sha[:12]
 
 
+def database_environment(uri):
+    """Parse trusted libpq URI without placing credentials in argv or files."""
+    mapping={'sslmode':'PGSSLMODE','channel_binding':'PGCHANNELBINDING','connect_timeout':'PGCONNECT_TIMEOUT','application_name':'PGAPPNAME','target_session_attrs':'PGTARGETSESSIONATTRS','gssencmode':'PGGSSENCMODE','sslnegotiation':'PGSSLNEGOTIATION','sslsni':'PGSSLSNI','sslrootcert':'PGSSLROOTCERT','sslcert':'PGSSLCERT','sslkey':'PGSSLKEY'}
+    try:
+        if not isinstance(uri,str) or re.search(r'%(?![0-9a-fA-F]{2})',uri): raise ValueError()
+        parsed=urlsplit(uri)
+        if parsed.scheme not in ('postgres','postgresql') or not parsed.hostname or parsed.username is None or not parsed.path.startswith('/') or len(parsed.path)<2 or parsed.fragment: raise ValueError()
+        host=unquote(parsed.hostname); port=5432 if parsed.port is None else parsed.port
+        if not 1<=port<=65535 or any(c in host for c in ('/',' ',',')): raise ValueError()
+        env={'PGHOST':host,'PGPORT':str(port),'PGUSER':unquote(parsed.username),'PGPASSWORD':unquote(parsed.password or ''),'PGDATABASE':unquote(parsed.path[1:]),'PGCONNECT_TIMEOUT':'10','PGPASSFILE':'/dev/null','PGSERVICEFILE':'/dev/null'}
+        seen=set()
+        for name,value in (parse_qsl(parsed.query,keep_blank_values=True,strict_parsing=True) if parsed.query else []):
+            if name not in mapping or name in seen or not value: raise ValueError()
+            seen.add(name)
+            if name=='connect_timeout' and (not value.isdecimal() or not 1<=int(value)<=30): raise ValueError()
+            env[mapping[name]]=value
+        if any(any(ord(c)<32 for c in value) for value in env.values()): raise ValueError()
+        return env
+    except (ValueError,TypeError,UnicodeError): raise Blocked('invalid database connection configuration') from None
+
+
 def operation_label(command):
     """Only fixed operation names may reach diagnostics; never arguments or output."""
     if command and command[0]=='psql': return 'psql'
@@ -121,14 +142,16 @@ class Publisher:
         if type(self.frozen) is not bool or self.frozen:
             raise Blocked('trusted publication policy is frozen or invalid')
         if os.environ.get('DATABASE_URL'):
-            # libpq reads the URL through the environment; credentials never enter argv/output.
-            old = os.environ.get('PGDATABASE')
-            os.environ['PGDATABASE'] = os.environ['DATABASE_URL']
+            connection=database_environment(os.environ['DATABASE_URL'])
+            previous={key:value for key,value in os.environ.items() if key.startswith('PG')}
+            for key in previous: os.environ.pop(key,None)
+            os.environ.update(connection)
             try:
-                result = self.run(['psql', '-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', 'BEGIN READ ONLY; SELECT frozen FROM hermes.autopilot_state; ROLLBACK;'])
+                result = self.run(['psql', '-w', '-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1', '-c', 'BEGIN READ ONLY; SELECT frozen FROM hermes.autopilot_state; ROLLBACK;'])
             finally:
-                if old is None: os.environ.pop('PGDATABASE', None)
-                else: os.environ['PGDATABASE'] = old
+                for key in list(os.environ):
+                    if key.startswith('PG'): os.environ.pop(key,None)
+                os.environ.update(previous)
             if result.stdout.strip().splitlines() != ['BEGIN', 'f', 'ROLLBACK']:
                 raise Blocked('Hermes freeze state is frozen or unknown')
 
