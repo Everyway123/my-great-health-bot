@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "source_repository": "Everyway123/life_OS",
+  "source_commit": "7d8f0904e842e426274f904c20b2a261c27d7349",
+  "sha256": {
+    "scripts/agent_orchestrator/runner.py": "56730222740cba1f556bbdbff0fdbae71d34bc4edb8d4542ee5b1513d18e031c",
+    "scripts/agent_orchestrator/__init__.py": "646737a303a4e7e0d528774744ef8326366e6b181daf4cc6ecca8ca66cb6b135",
+    "scripts/agent_orchestrator/providers.py": "2cb7729a4a9eeb6d40c75e781953fc22b0a36be10bb444b0f479ca73043d87a1",
+    "scripts/agent_orchestrator/report_status.py": "1b251bdc5e03c03acd00a90b14db30d996a667d21ebc5022f06a86e378722b79",
+    "scripts/agent_orchestrator/publish.py": "ffb221a6b32d7f398909732baf2b55d0b5aa84dc6931b676a8348f24737a1a86",
+    "scripts/agent_orchestrator/tests/test_providers.py": "47816a5b96de10138a18f9956a88602775647e7614647ddaa71e973df0d63b59",
+    "scripts/agent_orchestrator/tests/test_runner.py": "9d0f31cda4ae2dce61ae86e096c2ed69f7207d78bd1a8dea28fd2c1ad307812f",
+    "scripts/agent_orchestrator/tests/test_report_status.py": "517dd716ec381faa9cc5bc0d4c0f3dcaaa107eb5c07ce5cfea275725e5e20f10",
+    "scripts/agent_orchestrator/tests/test_sandbox.py": "b364a3e5c8fd19c65bb3537adaa1bc8dfc87b74c0b3bdc54bc6a05a759cabbf7",
+    "scripts/agent_orchestrator/tests/test_publish.py": "8f2ca213f94f1cb7023c2feb8682ae27904c2ae10c0ccb0874987e17158bff66",
+    "scripts/agent_orchestrator/tests/test_docker.py": "35147afb5cb551c6bc44a837c1ef0485d0207d097662d0c494d30198a5bef08c",
+    ".github/workflows/agent-orchestration.yml": "99e2bc4ab9e00a0791e7878cb810c76a58f43906c6ce48584f0f3d7800f3c1c7",
+    ".github/workflows/agent-review.yml": "c48d827c636d1b8a74feaf11cadb83eb226a07750d22a37793b0f75065db8896",
+    ".github/workflows/agent-runner-tests.yml": "fce4e56bb0707aec060c2e5da8048fc527055886057d61776b645ebccb3e516f"
+  }
+}

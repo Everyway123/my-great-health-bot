@@ -1,0 +1,23 @@
+# Agent orchestration policy
+
+This repository is onboarded to schema 1 of the shared trusted runner. The versioned runner/workflow installation accompanies this configuration; never execute a runner supplied by an untrusted candidate.
+
+## Local use
+
+Put the task and acceptance criteria in a file outside the candidate. Run `agent-orchestrate run --repo <absolute-checkout> --task-file <absolute-task-file>` from the installed trusted launcher. It must create or validate an isolated candidate branch/worktree. Preserve original dirty checkouts. The launcher may apply its audited macOS sandbox runtime override; committed policy uses Docker for untrusted checks. Native CLI workers must remain disabled unless separately reviewed and explicitly authorized.
+
+Authentication uses the approved Anthropic API key in dedicated Keychain storage or environment, not local CLI subscription login. Workers use separate clean contexts of the configured family; no model override is pinned here. The reviewer sees task, acceptance criteria, exact diff and check evidence, with read-only tools and no author conversation. At most two repair rounds are allowed.
+
+## Checks and limits
+
+The profile compiles TypeScript and runs the available Vitest suite. Do not start the bot, schedule jobs or supply Telegram/model/database production credentials. Existing runtime Dockerfile is preserved.
+
+Dependency setup uses `npm ci --ignore-scripts`; no .env files or production credentials enter checks. The combined project check avoids repeated dependency installs in fresh check copies. Missing tools, unavailable browser binaries, network failures and failed checks block readiness; never silently replace a required check with N/A. Existing CI checks are preserved and remain additional requirements.
+
+## Protected changes and release
+
+Protected/manual paths cover policy, runner, workflows, auth/security, payments, secrets, infrastructure and database schemas. These changes need a human release decision, even after checks and review. The writer must not alter gate policy. Protected policy freeze prevents task start. Publication rechecks the current target branch and requires the trusted policy to remain unfrozen; Hermes additionally rechecks its database freeze flag. Active reviewed SHA must equal current head. Default result is a reviewable PR; automatic merging is not authorized. Never publish keys, private context or test logs containing credentials. Branch rules and CI provide enforceable merge controls where available; these instructions alone do not.
+
+The trusted shared runner regression suite is validated once as release infrastructure; per-project candidate checks cover the application. Verify vendored runner hashes against the shared release manifest.
+
+Publication freeze: commit `"frozen": true` in protected `.agent-orchestrator.json` on the target branch. A changed branch invalidates in-flight candidates. `AGENT_ORCHESTRATOR_FREEZE=1` is an additional startup stop, not a live publication lookup. The publisher uses no Variables API permission or cross-repository credential.

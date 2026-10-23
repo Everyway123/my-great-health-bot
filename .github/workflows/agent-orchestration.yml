@@ -1,0 +1,131 @@
+name: Agent orchestration
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task and acceptance criteria
+        required: true
+        type: string
+      task_id:
+        description: Tracking identifier
+        default: manual
+        type: string
+  workflow_call:
+    inputs:
+      task:
+        required: true
+        type: string
+      task_id:
+        default: manual
+        type: string
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      DATABASE_URL:
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: agent-orchestration-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    name: Author, checks and independent review
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted runner
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Checkout isolated candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Write task as data
+        env:
+          TASK: ${{ inputs.task }}
+        run: |
+          mkdir -p state
+          python -c "import os,pathlib; pathlib.Path('state/task.txt').write_text(os.environ['TASK'])"
+      - name: Run bounded author and reviewer loop
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGENT_ORCHESTRATOR_FREEZE: ${{ vars.AGENT_ORCHESTRATOR_FREEZE }}
+        run: |
+          python trusted/scripts/agent_orchestrator/runner.py run \
+            --repo "$GITHUB_WORKSPACE/candidate" --task-file "$GITHUB_WORKSPACE/state/task.txt" \
+            --config "$GITHUB_WORKSPACE/trusted/.agent-orchestrator.json" \
+            --output "$GITHUB_WORKSPACE/state" --backend anthropic --isolated-candidate
+      - name: Package reviewed commits
+        working-directory: candidate
+        run: |
+          BASE=$(python -c "import json; print(json.load(open('../state/gate.json'))['base_sha'])")
+          git -c core.hooksPath=/dev/null bundle create ../state/candidate.bundle "$BASE..HEAD"
+      - name: Preserve safe verdict
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: orchestration-verdict
+          path: |
+            state/gate.json
+            state/report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Hand off reviewed candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reviewed-candidate
+          path: |
+            state/gate.json
+            state/candidate.bundle
+          if-no-files-found: error
+          retention-days: 3
+  publish:
+    name: Publish reviewed PR
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      statuses: write
+    steps:
+      - name: Checkout trusted publisher and base
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: reviewed-candidate
+          path: ${{ runner.temp }}/reviewed-candidate
+      - name: Revalidate SHA, freeze and publish PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TASK: ${{ inputs.task }}
+          TASK_ID: ${{ inputs.task_id }}
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          python -c "import os,pathlib; pathlib.Path(os.environ['RUNNER_TEMP'],'task.txt').write_text(os.environ['TASK'])"
+          python scripts/agent_orchestrator/publish.py --repo "$GITHUB_WORKSPACE" \
+            --bundle "$RUNNER_TEMP/reviewed-candidate/candidate.bundle" \
+            --gate "$RUNNER_TEMP/reviewed-candidate/gate.json" \
+            --task-file "$RUNNER_TEMP/task.txt" --task-id "$TASK_ID" \
+            --repository "$GITHUB_REPOSITORY" --base-branch "$TARGET_BRANCH" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
