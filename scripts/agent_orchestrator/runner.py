@@ -28,6 +28,14 @@ def redact(value):
     return text
 
 
+def redact_structure(value):
+    """Copy JSON-shaped data, redacting string leaves before serialization."""
+    if isinstance(value,str): return redact(value)
+    if isinstance(value,list): return [redact_structure(item) for item in value]
+    if isinstance(value,dict): return {key:redact_structure(item) for key,item in value.items()}
+    return value
+
+
 def check_diagnostics(stdout,stderr):
     """Bounded untrusted evidence, never instructions or raw process/environment dumps."""
     text=redact((stdout or '')+'\n'+(stderr or ''))
@@ -242,7 +250,9 @@ class Orchestrator:
                 if any(c.get('diagnostics',{}).get('kind')=='resource_limit' for c in report['checks']): raise Blocked('check environment resource unavailable; change trusted resource policy before retrying')
                 if git(self.repo,'rev-parse','HEAD')!=sha or git(self.repo,'status','--porcelain'): raise Blocked('candidate changed during checks')
                 evidence={'base_sha':base,'head_sha':sha,'checks':report['checks'],'diff':FileTools(self.repo,self.config).diff(base,sha)}
-                verdict=validate_verdict(self.provider.review(task,FileTools(self.repo,self.config),evidence),sha); report['verdict']=json.loads(redact(json.dumps(verdict)))
+                verdict=validate_verdict(self.provider.review(task,FileTools(self.repo,self.config),evidence),sha)
+                verdict=validate_verdict(redact_structure(verdict),sha)
+                report['verdict']=verdict
                 self.freeze()
                 if git(self.repo,'rev-parse','HEAD')!=sha or git(self.repo,'status','--porcelain'): raise Blocked('candidate changed during review')
                 manual=any(fnmatch.fnmatch(n,p) for n in names for p in self.config.get('manual_review_paths',[]))

@@ -158,6 +158,20 @@ class RunnerTests(unittest.TestCase):
         self.config['checks']=[{'name':'build','command':['python3','-c','print("JavaScript heap out of memory");raise SystemExit(1)']}]
         result=Orchestrator(self.repo,self.config,self.root/'out',Provider()).checks()[0]
         self.assertNotEqual(result['diagnostics']['kind'],'resource_limit')
+    def test_valid_review_with_quoted_credentials_is_structurally_redacted(self):
+        class QuotedCredential(Provider):
+            def review(inner,task,tools,evidence):
+                return {'reviewed_sha':evidence['head_sha'],'decision':'approve','findings':[{'severity':'P3','path':'candidate.txt','line':1,'reason':'The fixture password="dummy" and token="fixture-token" need redaction; preserve Unicode Привіт and quoted "example".'}]}
+        result=self.run_loop(QuotedCredential())
+        self.assertTrue(result['approved'],result.get('reason'))
+        self.assertEqual(result['head_sha'],result['verdict']['reviewed_sha'])
+        validate_verdict(result['verdict'],result['head_sha'])
+        reason=result['verdict']['findings'][0]['reason']
+        self.assertNotIn('dummy',reason);self.assertNotIn('fixture-token',reason)
+        self.assertIn('[REDACTED]',reason);self.assertIn('Привіт',reason);self.assertIn('"example"',reason)
+        for artifact in ('report.json','gate.json'):
+            text=(self.root/'out'/artifact).read_text();json.loads(text)
+            self.assertNotIn('dummy',text);self.assertNotIn('fixture-token',text)
     def test_provider_failure_fails_closed(self):
         class Broken(Provider):
             def review(self,*args): raise RuntimeError('provider unavailable')
