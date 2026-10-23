@@ -172,8 +172,17 @@ class Orchestrator:
     def freeze(self):
         if type(self.config.get('frozen',False)) is not bool or self.config.get('frozen',False): raise Blocked('trusted orchestration policy is frozen or invalid')
         if os.environ.get('AGENT_ORCHESTRATOR_FREEZE','').strip().lower() not in ('','false','0') or (self.config.get('freeze_file') and Path(self.config['freeze_file']).exists()): raise Blocked('orchestration frozen')
+    def check_source_paths(self):
+        paths=self.config.get('check_source_paths',[])
+        if type(paths) is not list: raise Blocked('invalid check source path policy')
+        for name in paths:
+            if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.@/-]+',name) or Path(name).suffix!='.ts': raise Blocked('invalid check source path policy')
+            if any(part in ('','.','..') or part.lower()=='.git' or part.lower().startswith('.env') for part in name.split('/')): raise Blocked('invalid check source path policy')
+        if len(paths)!=len(set(paths)): raise Blocked('invalid check source path policy')
+        return set(paths)
     def config_check(self):
         c=self.config
+        self.check_source_paths()
         if c.get('schema')!=1 or c.get('test_mode') not in ('docker','local') or type(c.get('max_repair_rounds',2)) is not int or not 0<=c.get('max_repair_rounds',2)<=2: raise Blocked('invalid configuration')
         if not c.get('checks'): raise Blocked('required checks missing')
         for command in [x.get('command') for x in c['checks']]+c.get('setup',[]):
@@ -186,6 +195,11 @@ class Orchestrator:
         for name in filter(None,names): t.path(name,True)
         return list(filter(None,names))
     def checks(self):
+        allowed_sources=self.check_source_paths()
+        tracked=list(filter(None,git(self.repo,'ls-files','-z').split('\0')))
+        for name in allowed_sources:
+            source=self.repo/name
+            if name not in tracked or not source.is_file() or source.is_symlink() or not source.resolve().is_relative_to(self.repo) or any((self.repo/Path(*Path(name).parts[:index])).is_symlink() for index in range(1,len(Path(name).parts))): raise Blocked('allowlisted check source missing, untracked, or unsafe')
         results=[]
         for check in self.config['checks']:
             self.freeze()
@@ -194,9 +208,10 @@ class Orchestrator:
                 copy.mkdir()
                 # Only committed candidate files enter the check environment. Ignored or
                 # untracked CLI side effects cannot silently influence SHA-bound checks.
-                for name in filter(None,git(self.repo,'ls-files','-z').split('\0')):
+                for name in tracked:
                     relative=Path(name)
-                    if any(p=='.git' or p.startswith('.env') or 'credential' in p.lower() or 'secret' in p.lower() for p in relative.parts): continue
+                    if any(p.lower()=='.git' or p.lower().startswith('.env') for p in relative.parts): continue
+                    if name not in allowed_sources and any('credential' in p.lower() or 'secret' in p.lower() for p in relative.parts): continue
                     source=self.repo/relative
                     if source.is_symlink() or not source.resolve().is_relative_to(self.repo): raise Blocked('candidate contains symlinks; isolated check refused')
                     target=copy/relative; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(source,target)

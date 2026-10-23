@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "source_repository": "Everyway123/life_OS",
-  "source_commit": "796fa53389b8db2feff1c2d073cb7c102581db42",
+  "source_commit": "07436e08176dc9d2ca4ad08347f9c931fd75ba88",
   "sha256": {
-    "scripts/agent_orchestrator/runner.py": "0e7616005c45b9e4d59d1a35b8af581f827e3f3e117225a6ce2a466ddbbf87a4",
+    "scripts/agent_orchestrator/runner.py": "b4c216f2416aac9aeb11c5ed5c1122bdd4410be76a9294b403da0b3050857d90",
     "scripts/agent_orchestrator/release.py": "653b2d4eb802b0bac34e3b426ef364c3a6314e9002831e127edfd5d18c40f0de",
     "scripts/agent_orchestrator/__init__.py": "646737a303a4e7e0d528774744ef8326366e6b181daf4cc6ecca8ca66cb6b135",
     "scripts/agent_orchestrator/providers.py": "202f3f7792525bd04d844618858b56a30f71484deb156488524bf6f123503b9e",
@@ -21,6 +21,7 @@
     ".github/workflows/agent-runner-tests.yml": "fce4e56bb0707aec060c2e5da8048fc527055886057d61776b645ebccb3e516f",
     ".github/workflows/agent-release.yml": "96ad05968fa4ea7e02a7754b6e246fb2506e8f929151fbaf03ed9817d546b3c4",
     "scripts/agent_orchestrator/tests/test_runner_exit.py": "27df658f9d27fa320a81bfe818d4ccbb7af789901e961ef6d9a0d621b654bfa5",
-    "scripts/agent_orchestrator/tests/test_file_paging.py": "5ad42bd8cdb744f605f442524143ad79af9cb9c0997593310e4350ae27ee1384"
+    "scripts/agent_orchestrator/tests/test_file_paging.py": "5ad42bd8cdb744f605f442524143ad79af9cb9c0997593310e4350ae27ee1384",
+    "scripts/agent_orchestrator/tests/test_check_sources.py": "e0bce65017a540e23b114cc9fcf146673009daf57a261ceb6ded38156b9d2dca"
   }
 }
