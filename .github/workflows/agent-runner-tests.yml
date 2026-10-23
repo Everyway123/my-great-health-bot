@@ -1,0 +1,19 @@
+name: Orchestration infrastructure tests
+on:
+  pull_request:
+    paths:
+      - scripts/agent_orchestrator/**
+      - .github/workflows/agent-*.yml
+      - .github/workflows/self-code.yml
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: /usr/bin/python3 -m unittest discover -s scripts/agent_orchestrator/tests -v
