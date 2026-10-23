@@ -61,7 +61,7 @@ class RunnerTests(unittest.TestCase):
         from scripts.agent_orchestrator.runner import redact
         self.assertNotIn('sk-ant-api03-'+'a'*30, redact('key: sk-ant-api03-'+'a'*30))
         (self.repo/'file.txt').write_text('API_KEY="supersecretvalue123"')
-        self.assertNotIn('supersecretvalue123',FileTools(self.repo,self.config).read('file.txt'))
+        self.assertNotIn('supersecretvalue123',FileTools(self.repo,self.config).read('file.txt')['content'])
     def test_review_rejects_truncated_non_schema_and_false_approval(self):
         for verdict in ['',[],{'reviewed_sha':'head','decision':'approve','findings':[{'severity':'P1','path':'x','line':1,'reason':'bug'}]}]:
             with self.assertRaises(Blocked): validate_verdict(verdict,'head')
